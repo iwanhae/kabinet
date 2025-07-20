@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/iwanhae/kube-event-analyzer/internal/storage"
@@ -26,6 +28,52 @@ func New(storage *storage.Storage, port string) *Server {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/query", s.handleQuery)
+	
+	// Serve static files from frontend/dist
+	distDir := "frontend/dist"
+	if _, err := os.Stat(distDir); err == nil {
+		fs := http.FileServer(http.Dir(distDir))
+		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check if file exists
+			path := filepath.Join(distDir, r.URL.Path)
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				// Serve index.html for client-side routing
+				http.ServeFile(w, r, filepath.Join(distDir, "index.html"))
+				return
+			}
+			fs.ServeHTTP(w, r)
+		}))
+		log.Println("Serving static files from", distDir)
+	} else {
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Kube Event Analyzer</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        .api-info { background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Kube Event Analyzer API</h1>
+        <p>Frontend not built. Build the frontend with:</p>
+        <div class="api-info">
+            <code>cd frontend && npm run build</code>
+        </div>
+        <p>API endpoint available at <code>/query</code></p>
+    </div>
+</body>
+</html>
+			`))
+		})
+		log.Println("Frontend not found, serving API info page")
+	}
 
 	s.server = &http.Server{
 		Addr:    ":" + port,

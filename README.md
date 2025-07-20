@@ -68,11 +68,17 @@ graph TD
 .
 ├── data/                  # Default directory for DuckDB files and Parquet archives
 ├── internal/
-│   ├── api/               # API server logic
+│   ├── api/               # API server logic (includes web UI serving)
 │   ├── collector/         # Kubernetes event collection logic
 │   └── storage/           # DuckDB and Parquet storage management
-├── src/                   # React frontend code
-├── package.json
+├── frontend/              # React frontend application
+│   ├── src/
+│   │   ├── components/    # React components
+│   │   ├── hooks/         # Custom React hooks
+│   │   ├── types/         # TypeScript type definitions
+│   │   └── utils/         # Utility functions
+│   ├── dist/              # Built frontend files (served by Go server)
+│   └── package.json
 ├── go.mod
 ├── go.sum
 └── main.go                # Application entrypoint
@@ -80,18 +86,62 @@ graph TD
 
 ## Getting Started
 
-*(This section can be expanded as the project matures)*
-
 1.  **Prerequisites**:
     -   Go 1.24+
+    -   Node.js 18+ and npm
     -   Access to a Kubernetes cluster (a valid `kubeconfig` file)
 
-2.  **Build & Run**:
+2.  **Build Frontend**:
     
     ```shell
-    # Run the application
-    go run main.go
+    cd frontend
+    npm install
+    npm run build
+    cd ..
     ```
+
+3.  **Build & Run**:
+    
+    ```shell
+    # Build the application
+    go build -o kube-event-analyzer .
+    
+    # Run the application
+    ./kube-event-analyzer
+    ```
+
+4.  **Access the Web UI**:
+    
+    Open your browser and navigate to `http://localhost:8080`
+    
+    The web interface provides:
+    - Real-time cluster event monitoring dashboard
+    - Interactive time range selection
+    - Event severity analysis with color-coded indicators
+    - Namespace-based event filtering
+    - Time-series charts showing event trends
+    - Detailed event tables with search and filtering capabilities
+
+## Web UI Features
+
+The web interface is built with React and TypeScript, featuring a modern Twitter-inspired design language:
+
+- **Dashboard Overview**: Key metrics cards showing total events, normal events, warnings, and critical events
+- **Time-series Visualization**: Interactive charts showing event patterns over time
+- **Event Analysis**: Breakdown by event type, namespace, and severity
+- **Real-time Updates**: Configurable time ranges (1 hour, 6 hours, 24 hours, 3 days, 1 week)
+- **Responsive Design**: Works seamlessly on desktop and mobile devices
+
+## Development
+
+To run the frontend in development mode:
+
+```shell
+cd frontend
+npm run dev
+```
+
+This will start the Vite development server on `http://localhost:3000` with hot reload enabled.
 
 ## API Example
 
