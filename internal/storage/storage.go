@@ -137,12 +137,7 @@ func (s *Storage) Archive(ctx context.Context) error {
 func (s *Storage) processArchivedTable(tableName string, minTime, maxTime time.Time) {
 	log.Printf("Starting background processing for table: %s", tableName)
 
-	var parquetFileName string
-	if !minTime.IsZero() && !maxTime.IsZero() {
-		parquetFileName = filepath.Join(s.dataDir, fmt.Sprintf("events_%d_%d.parquet", minTime.Unix(), maxTime.Unix()))
-	} else {
-		parquetFileName = filepath.Join(s.dataDir, fmt.Sprintf("%s.parquet", tableName))
-	}
+	parquetFileName := filepath.Join(s.dataDir, fmt.Sprintf("events_%d_%d.parquet", minTime.Unix(), maxTime.Unix()))
 
 	// Using a new connection for the background task
 	conn, err := s.db.Conn(context.Background())
@@ -231,23 +226,128 @@ func (s *Storage) EnforceRetention(limitBytes int64) error {
 	return nil
 }
 
+// extractTimestampFromName parses a parquet filename and returns its start timestamp (in Unix seconds)
+// for sorting purposes. It supports "events_MIN_MAX.parquet"
 func extractTimestampFromName(filename string) int64 {
-	parts := strings.Split(strings.TrimSuffix(filename, ".parquet"), "_")
-	if len(parts) > 1 {
-		// For "events_MIN_MAX" format, use MIN. For "archive_TS", use TS.
-		var tsStr string
-		if parts[0] == "events" && len(parts) >= 2 {
-			tsStr = parts[1]
-		} else if parts[0] == "archive" && len(parts) >= 2 {
-			tsStr = parts[1]
-		}
+	minTs, _, ok := parseParquetFilename(filename)
+	if !ok {
+		log.Printf("Could not extract timestamp from filename: %s", filename)
+		return 0 // Place unparsable files at the beginning, though they are unlikely to be sorted correctly.
+	}
+	return minTs
+}
 
-		if ts, err := strconv.ParseInt(tsStr, 10, 64); err == nil {
-			return ts
+// parseParquetFilename extracts the min and max unix timestamps from a parquet filename.
+// It returns minTs, maxTs, and a boolean indicating success.
+func parseParquetFilename(filename string) (int64, int64, bool) {
+	base := strings.TrimSuffix(filename, ".parquet")
+	parts := strings.Split(base, "_")
+
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+
+	switch parts[0] {
+	case "events":
+		if len(parts) != 3 {
+			return 0, 0, false
+		}
+		minTs, errMin := strconv.ParseInt(parts[1], 10, 64)
+		maxTs, errMax := strconv.ParseInt(parts[2], 10, 64)
+		if errMin != nil || errMax != nil {
+			return 0, 0, false
+		}
+		return minTs, maxTs, true
+	case "kube":
+		if len(parts) == 4 && parts[1] == "events" && parts[2] == "archive" {
+			// Fallback filename format: kube_events_archive_<nanos>.parquet
+			nanoTs, err := strconv.ParseInt(parts[3], 10, 64)
+			if err != nil {
+				return 0, 0, false
+			}
+			ts := nanoTs / 1e9 // convert nano to unix seconds
+			return ts, ts, true
 		}
 	}
-	log.Printf("Could not extract timestamp from filename: %s", filename)
-	return 0 // Return 0 to place unparsable files at the beginning, but they are unlikely to be deleted first
+	return 0, 0, false
+}
+
+// RangeQuery executes a range query against the storage.
+// It executes the query by substituting the $events placeholder with the appropriate FROM clause.
+func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.Time) (*sql.Rows, error) {
+	files, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read data directory: %w", err)
+	}
+
+	queryStartTs := start.Unix()
+	queryEndTs := end.Unix()
+
+	var relevantFiles []string
+	var latestParquetMaxTs int64
+
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".parquet") {
+			continue
+		}
+
+		minTs, maxTs, ok := parseParquetFilename(file.Name())
+		if !ok {
+			log.Printf("Could not parse filename %s, including it just in case.", file.Name())
+			relevantFiles = append(relevantFiles, filepath.Join(s.dataDir, file.Name()))
+			continue
+		}
+
+		if maxTs > latestParquetMaxTs {
+			latestParquetMaxTs = maxTs
+		}
+
+		// File range overlaps with query range if:
+		// (file_start <= query_end) AND (file_end >= query_start)
+		if maxTs >= queryStartTs && minTs <= queryEndTs {
+			relevantFiles = append(relevantFiles, filepath.Join(s.dataDir, file.Name()))
+		}
+	}
+
+	// Determine if we need to query the live kube_events table.
+	// If the user's query range ends before the last archived event, we can skip it.
+	includeKubeEvents := true
+	if latestParquetMaxTs > 0 && queryEndTs < latestParquetMaxTs {
+		includeKubeEvents = false
+	}
+
+	fromClause, err := buildFromClause(relevantFiles, includeKubeEvents)
+	if err != nil {
+		log.Println("Query time range resulted in no data sources. Returning empty result.")
+		return s.db.QueryContext(ctx, "SELECT * FROM kube_events WHERE 1=0") // Return empty
+	}
+
+	finalQuery := strings.Replace(query, "$events", fromClause, 1)
+	log.Printf("Executing range query: %s", finalQuery)
+
+	return s.db.QueryContext(ctx, finalQuery)
+}
+
+func buildFromClause(relevantFiles []string, includeKubeEvents bool) (string, error) {
+	var fromSources []string
+	if includeKubeEvents {
+		fromSources = append(fromSources, "SELECT * FROM kube_events")
+	}
+
+	if len(relevantFiles) > 0 {
+		quotedFiles := make([]string, len(relevantFiles))
+		for i, p := range relevantFiles {
+			quotedFiles[i] = fmt.Sprintf("'%s'", p)
+		}
+		parquetSource := fmt.Sprintf("SELECT * FROM read_parquet([%s])", strings.Join(quotedFiles, ", "))
+		fromSources = append(fromSources, parquetSource)
+	}
+
+	if len(fromSources) == 0 {
+		return "", fmt.Errorf("no data sources for query")
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(fromSources, " UNION BY NAME ")), nil
 }
 
 func (s *Storage) AppendEvent(k8sEvent *corev1.Event) error {

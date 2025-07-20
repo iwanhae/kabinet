@@ -46,7 +46,7 @@ func main() {
 	log.Printf("Starting event watch from resourceVersion: %s", lastResourceVersion)
 
 	// Start the data lifecycle manager
-	go storage.ManageDataLifecycle(ctx, 1*time.Minute, 1*1024*1024*1024) // 1 minute interval, 1GB limit
+	go storage.ManageDataLifecycle(ctx, 3*time.Hour, 10*1024*1024*1024) // 3 hours interval, 10GB limit
 
 	watcher, err := collector.WatchEvents(ctx, c, lastResourceVersion)
 	if err != nil {
