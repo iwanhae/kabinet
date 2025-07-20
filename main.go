@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/iwanhae/kube-event-analyzer/internal/collector"
 	"github.com/iwanhae/kube-event-analyzer/internal/storage"
@@ -43,6 +44,9 @@ func main() {
 		log.Fatalf("failed to get last resource version: %v", err)
 	}
 	log.Printf("Starting event watch from resourceVersion: %s", lastResourceVersion)
+
+	// Start the data lifecycle manager
+	go storage.ManageDataLifecycle(ctx, 1*time.Minute, 1*1024*1024*1024) // 1 minute interval, 1GB limit
 
 	watcher, err := collector.WatchEvents(ctx, c, lastResourceVersion)
 	if err != nil {
