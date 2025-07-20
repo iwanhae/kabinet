@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	toolswatch "k8s.io/client-go/tools/watch"
 )
 
 func ConnectK8s() (*kubernetes.Clientset, error) {
@@ -28,10 +29,21 @@ func ConnectK8s() (*kubernetes.Clientset, error) {
 	return clientset, nil
 }
 
-func WatchEvents(ctx context.Context, c *kubernetes.Clientset) (watch.Interface, error) {
-	watcher, err := c.CoreV1().Events("").Watch(ctx, metav1.ListOptions{})
+type eventWatcher struct {
+	client kubernetes.Interface
+}
+
+func (e *eventWatcher) WatchWithContext(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
+	return e.client.CoreV1().Events("").Watch(ctx, options)
+}
+
+func WatchEvents(ctx context.Context, c *kubernetes.Clientset, initialResourceVersion string) (watch.Interface, error) {
+	watcherClient := &eventWatcher{client: c}
+
+	rw, err := toolswatch.NewRetryWatcherWithContext(ctx, initialResourceVersion, watcherClient)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create watcher: %w", err)
+		return nil, fmt.Errorf("failed to create retry watcher: %w", err)
 	}
-	return watcher, nil
+
+	return rw, nil
 }

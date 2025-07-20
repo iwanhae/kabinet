@@ -43,13 +43,19 @@ func main() {
 		log.Fatalf("failed to create table: %v", err)
 	}
 
+	lastResourceVersion, err := storage.GetLastResourceVersion(db)
+	if err != nil {
+		log.Fatalf("failed to get last resource version: %v", err)
+	}
+	log.Printf("Starting event watch from resourceVersion: %s", lastResourceVersion)
+
 	appender, cleanup, err := storage.NewAppender(ctx, connector)
 	if err != nil {
 		log.Fatalf("failed to create appender: %v", err)
 	}
 	defer cleanup()
 
-	watcher, err := collector.WatchEvents(ctx, c)
+	watcher, err := collector.WatchEvents(ctx, c, lastResourceVersion)
 	if err != nil {
 		panic(err)
 	}

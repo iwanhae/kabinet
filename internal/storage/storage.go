@@ -179,3 +179,19 @@ func AppendEvent(appender *duckdb.Appender, k8sEvent *corev1.Event) error {
 	}
 	return nil
 }
+
+func GetLastResourceVersion(db *sql.DB) (string, error) {
+	var resourceVersion string
+	// Order by eventTime DESC and then resourceVersion DESC to handle events with the same timestamp.
+	// We are casting resourceVersion to a UINTEGER for sorting because Kubernetes resourceVersions are
+	// large numbers represented as strings.
+	err := db.QueryRow("SELECT metadata.resourceVersion FROM kube_events ORDER BY eventTime DESC, TRY_CAST(metadata.resourceVersion AS UINTEGER) DESC LIMIT 1").Scan(&resourceVersion)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// If the table is empty, we don't have a resource version to start from.
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to query last resource version: %w", err)
+	}
+	return resourceVersion, nil
+}
