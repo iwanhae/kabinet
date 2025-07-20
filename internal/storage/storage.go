@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"log"
 
@@ -10,97 +11,51 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func NewDB(path string) (*sql.DB, *duckdb.Connector, error) {
+type Storage struct {
+	db       *sql.DB
+	conn     driver.Conn
+	appender *duckdb.Appender
+}
+
+func New(ctx context.Context, path string) (*Storage, error) {
 	connector, err := duckdb.NewConnector(path, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create duckdb connector: %w", err)
+		return nil, fmt.Errorf("failed to create duckdb connector: %w", err)
 	}
 
 	db := sql.OpenDB(connector)
-	return db, connector, nil
-}
-
-func CreateTable(db *sql.DB) error {
-	if _, err := db.Exec(`
-	CREATE TABLE IF NOT EXISTS kube_events (
-		-- From metav1.TypeMeta (inlined)
-		kind VARCHAR,
-		apiVersion VARCHAR,
-	
-		-- From metav1.ObjectMeta
-		metadata STRUCT(
-			name VARCHAR,
-			namespace VARCHAR,
-			uid VARCHAR,
-			resourceVersion VARCHAR,
-			creationTimestamp TIMESTAMP
-		),
-	
-		-- From corev1.Event
-		involvedObject STRUCT(
-			kind VARCHAR,
-			namespace VARCHAR,
-			name VARCHAR,
-			uid VARCHAR,
-			apiVersion VARCHAR,
-			resourceVersion VARCHAR,
-			fieldPath VARCHAR
-		),
-		reason VARCHAR,
-		message VARCHAR,
-		source STRUCT(
-			component VARCHAR,
-			host VARCHAR
-		),
-		firstTimestamp TIMESTAMP,
-		lastTimestamp TIMESTAMP,
-		"count" INTEGER,
-		"type" VARCHAR,
-		eventTime TIMESTAMP,
-		series STRUCT(
-			"count" INTEGER,
-			lastObservedTime TIMESTAMP
-		) DEFAULT NULL,
-		action VARCHAR,
-		related STRUCT(
-			kind VARCHAR,
-			namespace VARCHAR,
-			name VARCHAR,
-			uid VARCHAR,
-			apiVersion VARCHAR,
-			resourceVersion VARCHAR,
-			fieldPath VARCHAR
-		) DEFAULT NULL,
-		reportingComponent VARCHAR,
-		reportingInstance VARCHAR
-	);
-	`); err != nil {
-		return fmt.Errorf("failed to create table: %w", err)
+	if _, err := db.Exec(createTableSQL); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
-	return nil
-}
 
-func NewAppender(ctx context.Context, connector *duckdb.Connector) (*duckdb.Appender, func(), error) {
 	conn, err := connector.Connect(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get connection: %w", err)
+		db.Close()
+		return nil, fmt.Errorf("failed to get connection: %w", err)
 	}
 
 	appender, err := duckdb.NewAppenderFromConn(conn, "", "kube_events")
 	if err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("failed to create appender: %w", err)
+		db.Close()
+		return nil, fmt.Errorf("failed to create appender: %w", err)
 	}
 
-	cleanup := func() {
-		appender.Close()
-		conn.Close()
-	}
-
-	return appender, cleanup, nil
+	return &Storage{
+		db:       db,
+		conn:     conn,
+		appender: appender,
+	}, nil
 }
 
-func AppendEvent(appender *duckdb.Appender, k8sEvent *corev1.Event) error {
+func (s *Storage) Close() {
+	s.appender.Close()
+	s.conn.Close()
+	s.db.Close()
+}
+
+func (s *Storage) AppendEvent(k8sEvent *corev1.Event) error {
 	var series map[string]any
 	if k8sEvent.Series != nil {
 		series = map[string]any{
@@ -134,7 +89,7 @@ func AppendEvent(appender *duckdb.Appender, k8sEvent *corev1.Event) error {
 		}
 	}
 
-	err := appender.AppendRow(
+	err := s.appender.AppendRow(
 		k8sEvent.Kind,
 		k8sEvent.APIVersion,
 		map[string]any{
@@ -174,18 +129,18 @@ func AppendEvent(appender *duckdb.Appender, k8sEvent *corev1.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to append row: %w", err)
 	}
-	if err := appender.Flush(); err != nil {
+	if err := s.appender.Flush(); err != nil {
 		log.Printf("failed to flush appender: %v", err)
 	}
 	return nil
 }
 
-func GetLastResourceVersion(db *sql.DB) (string, error) {
+func (s *Storage) GetLastResourceVersion() (string, error) {
 	var resourceVersion string
 	// Order by eventTime DESC and then resourceVersion DESC to handle events with the same timestamp.
 	// We are casting resourceVersion to a UINTEGER for sorting because Kubernetes resourceVersions are
 	// large numbers represented as strings.
-	err := db.QueryRow("SELECT metadata.resourceVersion FROM kube_events ORDER BY eventTime DESC, TRY_CAST(metadata.resourceVersion AS UINTEGER) DESC LIMIT 1").Scan(&resourceVersion)
+	err := s.db.QueryRow("SELECT metadata.resourceVersion FROM kube_events ORDER BY eventTime DESC, TRY_CAST(metadata.resourceVersion AS UINTEGER) DESC LIMIT 1").Scan(&resourceVersion)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// If the table is empty, we don't have a resource version to start from.

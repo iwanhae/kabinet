@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -33,41 +32,29 @@ func main() {
 		panic(err)
 	}
 
-	db, connector, err := storage.NewDB("events.db")
+	storage, err := storage.New(ctx, "data/events.db")
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer storage.Close()
 
-	if err := storage.CreateTable(db); err != nil {
-		log.Fatalf("failed to create table: %v", err)
-	}
-
-	lastResourceVersion, err := storage.GetLastResourceVersion(db)
+	lastResourceVersion, err := storage.GetLastResourceVersion()
 	if err != nil {
 		log.Fatalf("failed to get last resource version: %v", err)
 	}
 	log.Printf("Starting event watch from resourceVersion: %s", lastResourceVersion)
 
-	appender, cleanup, err := storage.NewAppender(ctx, connector)
-	if err != nil {
-		log.Fatalf("failed to create appender: %v", err)
-	}
-	defer cleanup()
-
 	watcher, err := collector.WatchEvents(ctx, c, lastResourceVersion)
 	if err != nil {
 		panic(err)
 	}
-	enc := json.NewEncoder(os.Stdout)
 	for event := range watcher.ResultChan() {
-		enc.Encode(event)
 		if event.Type == watch.Added || event.Type == watch.Modified {
 			k8sEvent := event.Object.(*corev1.Event)
 
 			fmt.Printf("Event: %s/%s %s (%s)\n", k8sEvent.Namespace, k8sEvent.Name, k8sEvent.Reason, event.Type)
 
-			if err := storage.AppendEvent(appender, k8sEvent); err != nil {
+			if err := storage.AppendEvent(k8sEvent); err != nil {
 				log.Printf("failed to append event: %v", err)
 			}
 		}
