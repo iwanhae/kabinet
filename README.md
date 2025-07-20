@@ -60,10 +60,6 @@ graph TD
     end
     J["User"] --> I
     I["React Web UI"] -- "SQL Query" --> G
-
-
-
-
 ```
 
 ## Project Structure
@@ -96,3 +92,97 @@ graph TD
     # Run the application
     go run main.go
     ```
+
+## API Example
+
+`$events` is a macro of all the events in the time range.
+
+```shell
+curl -X POST http://localhost:8080/query \
+-H "Content-Type: application/json" \
+-d '{
+    "query": "SELECT reason, COUNT(*) as count FROM $events GROUP BY reason ORDER BY count DESC",
+    "start": "2025-01-01T00:00:00Z",
+    "end": "2026-01-02T00:00:00Z"
+}'
+```
+
+```json
+{
+  "results": [
+    {
+      "count": 717,
+      "reason": "FailedScheduling"
+    },
+    {
+      "count": 629,
+      "reason": "Scheduled"
+    },
+    {
+      "count": 564,
+      "reason": "Pulling"
+    },
+    {
+      "count": 550,
+      "reason": "Pulled"
+    },
+  ]
+}
+```
+
+Table schema:
+
+```sql
+CREATE TABLE $events (
+	-- From metav1.TypeMeta (inlined)
+	kind VARCHAR,
+	apiVersion VARCHAR,
+
+	-- From metav1.ObjectMeta
+	metadata STRUCT(
+		name VARCHAR,
+		namespace VARCHAR,
+		uid VARCHAR,
+		resourceVersion VARCHAR,
+		creationTimestamp TIMESTAMP
+	),
+
+	-- From corev1.Event
+	involvedObject STRUCT(
+		kind VARCHAR,
+		namespace VARCHAR,
+		name VARCHAR,
+		uid VARCHAR,
+		apiVersion VARCHAR,
+		resourceVersion VARCHAR,
+		fieldPath VARCHAR
+	),
+	reason VARCHAR,
+	message VARCHAR,
+	source STRUCT(
+		component VARCHAR,
+		host VARCHAR
+	),
+	firstTimestamp TIMESTAMP,
+	lastTimestamp TIMESTAMP,
+	"count" INTEGER,
+	"type" VARCHAR,
+	eventTime TIMESTAMP,
+	series STRUCT(
+		"count" INTEGER,
+		lastObservedTime TIMESTAMP
+	) DEFAULT NULL,
+	action VARCHAR,
+	related STRUCT(
+		kind VARCHAR,
+		namespace VARCHAR,
+		name VARCHAR,
+		uid VARCHAR,
+		apiVersion VARCHAR,
+		resourceVersion VARCHAR,
+		fieldPath VARCHAR
+	) DEFAULT NULL,
+	reportingComponent VARCHAR,
+	reportingInstance VARCHAR
+);
+```
