@@ -38,6 +38,9 @@ func (e *eventWatcher) WatchWithContext(ctx context.Context, options metav1.List
 }
 
 func WatchEvents(ctx context.Context, c *kubernetes.Clientset, initialResourceVersion string) (watch.Interface, error) {
+	if initialResourceVersion == "" {
+		initialResourceVersion = "1"
+	}
 	watcherClient := &eventWatcher{client: c}
 
 	rw, err := toolswatch.NewRetryWatcherWithContext(ctx, initialResourceVersion, watcherClient)
