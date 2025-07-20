@@ -53,4 +53,8 @@ CREATE TABLE IF NOT EXISTS kube_events (
 	reportingComponent VARCHAR,
 	reportingInstance VARCHAR
 );
+CREATE UNIQUE INDEX IF NOT EXISTS kube_events_resourceVersion_idx
+  ON kube_events (
+    ((metadata).resourceVersion)
+  );
 `
