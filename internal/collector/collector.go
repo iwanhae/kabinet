@@ -3,12 +3,13 @@ package collector
 import (
 	"context"
 	"fmt"
+	"log"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/watch"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-	toolswatch "k8s.io/client-go/tools/watch"
 )
 
 func ConnectK8s() (*kubernetes.Clientset, error) {
@@ -29,24 +30,32 @@ func ConnectK8s() (*kubernetes.Clientset, error) {
 	return clientset, nil
 }
 
-type eventWatcher struct {
-	client kubernetes.Interface
-}
+func WatchEvents(ctx context.Context, c *kubernetes.Clientset) <-chan v1.Event {
+	eventCh := make(chan v1.Event, 100)
 
-func (e *eventWatcher) WatchWithContext(ctx context.Context, options metav1.ListOptions) (watch.Interface, error) {
-	return e.client.CoreV1().Events("").Watch(ctx, options)
-}
+	source := cache.NewListWatchFromClient(
+		c.CoreV1().RESTClient(),
+		"events",
+		v1.NamespaceAll,
+		fields.Everything(),
+	)
 
-func WatchEvents(ctx context.Context, c *kubernetes.Clientset, initialResourceVersion string) (watch.Interface, error) {
-	if initialResourceVersion == "" {
-		initialResourceVersion = "1"
-	}
-	watcherClient := &eventWatcher{client: c}
+	informer := cache.NewSharedInformer(source, &v1.Event{}, 0)
 
-	rw, err := toolswatch.NewRetryWatcherWithContext(ctx, initialResourceVersion, watcherClient)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create retry watcher: %w", err)
-	}
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			if event, ok := obj.(*v1.Event); ok {
+				log.Printf("Received event: %v", event.Name)
+				select {
+				case eventCh <- *event:
+				case <-ctx.Done():
+					return
+				}
+			}
+		},
+	})
 
-	return rw, nil
+	go informer.Run(ctx.Done())
+
+	return eventCh
 }

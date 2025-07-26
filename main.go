@@ -13,8 +13,6 @@ import (
 	"github.com/iwanhae/kube-event-analyzer/internal/api"
 	"github.com/iwanhae/kube-event-analyzer/internal/collector"
 	"github.com/iwanhae/kube-event-analyzer/internal/storage"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/watch"
 )
 
 func main() {
@@ -35,7 +33,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize storage: %v", err)
 	}
-	defer storage.Close()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-ctx.Done()
+		log.Println("Shutting down storage...")
+		storage.Close()
+	}()
 
 	// --- API Server ---
 	apiServer := api.New(storage, "8080")
@@ -64,6 +68,8 @@ func main() {
 	go func() {
 		defer wg.Done()
 		runCollector(ctx, storage, lastResourceVersion)
+		log.Println("Collector finished. Exiting.")
+		os.Exit(0)
 	}()
 
 	// Wait for shutdown signal
@@ -89,30 +95,21 @@ func runCollector(ctx context.Context, storage *storage.Storage, initialResource
 		return
 	}
 
-	watcher, err := collector.WatchEvents(ctx, c, initialResourceVersion)
-	if err != nil {
-		log.Printf("Error starting event watcher: %v. Collector will not run.", err)
-		return
-	}
+	watcher := collector.WatchEvents(ctx, c)
 
 	log.Println("Event collector started.")
 	for {
 		select {
-		case event, ok := <-watcher.ResultChan():
+		case event, ok := <-watcher:
 			if !ok {
 				log.Println("Event watcher channel closed. Collector is stopping.")
 				return
 			}
-			if event.Type == watch.Added || event.Type == watch.Modified {
-				if k8sEvent, ok := event.Object.(*corev1.Event); ok {
-					if err := storage.AppendEvent(k8sEvent); err != nil {
-						log.Printf("Failed to append event: %v", err)
-					}
-				}
+			if err := storage.AppendEvent(&event); err != nil {
+				log.Printf("Failed to append event: %v", err)
 			}
 		case <-ctx.Done():
 			log.Println("Context cancelled. Stopping event collector.")
-			watcher.Stop()
 			return
 		}
 	}

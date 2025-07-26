@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"fmt"
 	"log"
 	"os"
@@ -20,7 +19,6 @@ import (
 
 type Storage struct {
 	db        *sql.DB
-	conn      driver.Conn
 	dataDir   string
 	archiveMu sync.Mutex
 }
@@ -42,22 +40,16 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
-	conn, err := connector.Connect(ctx)
-	if err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to get connection: %w", err)
-	}
-
 	return &Storage{
 		db:      db,
-		conn:    conn,
 		dataDir: dataDir,
 	}, nil
 }
 
 func (s *Storage) Close() {
-	s.conn.Close()
-	s.db.Close()
+	if err := s.db.Close(); err != nil {
+		log.Printf("Error closing database: %v", err)
+	}
 }
 
 func (s *Storage) ManageDataLifecycle(ctx context.Context, interval time.Duration, limitBytes int64) {
