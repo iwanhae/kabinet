@@ -39,6 +39,7 @@ func main() {
 		<-ctx.Done()
 		log.Println("Shutting down storage...")
 		storage.Close()
+		log.Println("Storage closed")
 	}()
 
 	// --- API Server ---
@@ -46,37 +47,35 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		log.Println("Starting API server...")
 		if err := apiServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("API server failed: %v", err)
 		}
+		log.Println("API server closed")
 	}()
 
 	// --- Collector and Data Lifecycle ---
-	lastResourceVersion, err := storage.GetLastResourceVersion()
-	if err != nil {
-		log.Fatalf("Failed to get last resource version: %v", err)
-	}
-	log.Printf("Starting event watch from resourceVersion: %s", lastResourceVersion)
-
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		log.Println("Starting data lifecycle manager...")
 		storage.ManageDataLifecycle(ctx, 30*time.Minute, 10*1024*1024*1024) // 30 min interval, 10GB limit
+		log.Println("Data lifecycle manager finished")
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runCollector(ctx, storage, lastResourceVersion)
-		log.Println("Collector finished. Exiting.")
-		os.Exit(0)
+		log.Println("Starting event collector...")
+		runCollector(ctx, storage)
+		log.Println("Collector finished")
 	}()
 
 	// Wait for shutdown signal
 	<-ctx.Done()
 
 	// --- Graceful Shutdown ---
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
 	if err := apiServer.Shutdown(shutdownCtx); err != nil {
@@ -88,7 +87,7 @@ func main() {
 	log.Println("All processes finished. Exiting.")
 }
 
-func runCollector(ctx context.Context, storage *storage.Storage, initialResourceVersion string) {
+func runCollector(ctx context.Context, storage *storage.Storage) {
 	c, err := collector.ConnectK8s()
 	if err != nil {
 		log.Printf("Error connecting to Kubernetes: %v. Collector will not run.", err)
