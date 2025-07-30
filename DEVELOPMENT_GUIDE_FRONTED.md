@@ -115,9 +115,11 @@ A critical piece of global state is the **time range**, which is automatically u
 
 **Location**: `src/stores/timeRangeStore.ts`
 
-**Core Idea**: The time range (`from`, `to`) is stored in a Zustand store and synchronized with the URL's query parameters. This ensures that the selected time range persists across page navigations and browser refreshes. Any component using `useEventsQuery` will automatically re-fetch data when the time range changes.
+**Core Idea**: The time range is managed in a Zustand store and synchronized with the URL's query parameters. The store holds both the raw string values (e.g., `now-1h`) and the parsed ISO 8601 timestamps. Any component using `useEventsQuery` will automatically re-fetch data when the time range changes.
 
-**How to Update**: You should **not** update the time range directly. Instead, use the `TimeRangePicker` component located in the main layout. It provides a user-friendly interface for selecting quick ranges or absolute time frames and handles updating both the Zustand store and the URL parameters.
+**How to Update**: The time range should be updated via the `TimeRangePicker` component. It provides a UI for selecting quick ranges or absolute time frames.
+
+**Manual Refresh**: When a relative time range (e.g., "Last 30 minutes") is active, a **Refresh button** appears next to the picker. This allows the user to manually update the time range to the current time, triggering a data refresh across the application. The automatic refresh logic has been removed in favor of this manual control to improve performance and predictability.
 
 ### 3. Styling
 

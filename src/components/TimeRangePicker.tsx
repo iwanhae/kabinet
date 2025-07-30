@@ -11,8 +11,15 @@ import {
   styled,
   Collapse,
   Link,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
-import { AccessTime, ArrowDropDown, HelpOutline } from "@mui/icons-material";
+import {
+  AccessTime,
+  ArrowDropDown,
+  HelpOutline,
+  Refresh,
+} from "@mui/icons-material";
 import { DateTimePicker } from "@mui/x-date-pickers/DateTimePicker";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
@@ -46,7 +53,7 @@ const TimeRangePickerContainer = styled(Box)({
   display: "flex",
   alignItems: "center",
   justifyContent: "flex-end",
-  padding: "8px",
+  gap: "8px",
 });
 
 const TimeRangeButton = styled(Button)(({ theme }) => ({
@@ -162,7 +169,7 @@ const getCurrentTimezone = () => {
 
 export const TimeRangePicker = () => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
-  const { from, to } = useTimeRangeStore();
+  const { from, to, rawFrom, rawTo, refreshTimeRange } = useTimeRangeStore();
   const setTimeRangeWithUrl = useTimeRangeFromUrl();
 
   const [tempFromDate, setTempFromDate] = useState<Dayjs | null>(
@@ -237,13 +244,19 @@ export const TimeRangePicker = () => {
     handleClose();
   };
 
+  const handleRefresh = () => {
+    refreshTimeRange();
+  };
+
   const open = Boolean(anchorEl);
   const id = open ? "time-range-popover" : undefined;
   const timezoneInfo = getCurrentTimezone();
 
   const displayLabel =
-    quickRanges.find((r) => r.from === from && r.to === "now")?.label ||
+    quickRanges.find((r) => r.from === rawFrom && r.to === "now")?.label ||
     `${from} to ${to}`;
+
+  const isRelative = isRelativeTime(rawFrom) || isRelativeTime(rawTo);
 
   return (
     <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -275,6 +288,13 @@ export const TimeRangePicker = () => {
             </Typography>
           </Box>
         </TimeRangeButton>
+        {isRelative && (
+          <Tooltip title="Refresh time range">
+            <IconButton onClick={handleRefresh} size="small">
+              <Refresh />
+            </IconButton>
+          </Tooltip>
+        )}
         <Popover
           id={id}
           open={open}
@@ -312,7 +332,7 @@ export const TimeRangePicker = () => {
                       onClick={() =>
                         handleQuickRangeSelect(range.from, range.to)
                       }
-                      selected={from === range.from && to === range.to}
+                      selected={rawFrom === range.from && rawTo === range.to}
                       sx={{
                         py: 1,
                         px: 2,
@@ -333,7 +353,9 @@ export const TimeRangePicker = () => {
                         primaryTypographyProps={{
                           fontSize: "0.875rem",
                           fontWeight:
-                            from === range.from && to === range.to ? 600 : 400,
+                            rawFrom === range.from && rawTo === range.to
+                              ? 600
+                              : 400,
                         }}
                       />
                     </ListItemButton>

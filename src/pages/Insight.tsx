@@ -1,18 +1,16 @@
-import React, { useState } from "react";
+import React from "react";
 import {
   Typography,
   Box,
   Grid,
   Card,
   CardContent,
-  ButtonGroup,
-  Button,
-  Chip,
   styled,
 } from "@mui/material";
 import { useLocation } from "wouter";
 import MetricCard from "../components/MetricCard";
-import BarChartIcon from "@mui/icons-material/BarChart";
+import { SmallChartPlaceholder } from "../components/ChartPlaceholder";
+import EventsTimelineChart from "../components/EventsTimelineChart";
 
 const HeaderBox = styled(Box)({
   display: "flex",
@@ -21,28 +19,8 @@ const HeaderBox = styled(Box)({
   marginBottom: "2rem",
 });
 
-const ChartPlaceholder = styled(Box)(({ theme }) => ({
-  height: 300,
-  backgroundColor: theme.palette.background.paper,
-  border: "1px dashed",
-  borderColor: theme.palette.divider,
-  borderRadius: theme.shape.borderRadius,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  flexDirection: "column",
-  gap: theme.spacing(2),
-}));
-
-const SmallChartPlaceholder = styled(ChartPlaceholder)({
-  height: 200,
-});
-
 const Insight: React.FC = () => {
   const [, setLocation] = useLocation();
-  const [selectedPeriod, setSelectedPeriod] = useState("7D");
-
-  const timePeriods = ["7D", "28D", "3M", "1Y"];
 
   const metrics = [
     {
@@ -124,67 +102,12 @@ const Insight: React.FC = () => {
             Account overview
           </Typography>
         </Box>
-
-        <ButtonGroup variant="outlined" size="small">
-          {timePeriods.map((period) => (
-            <Button
-              key={period}
-              variant={selectedPeriod === period ? "contained" : "outlined"}
-              onClick={() => setSelectedPeriod(period)}
-              sx={{
-                minWidth: 50,
-                fontWeight: 600,
-                borderRadius: 2,
-                "&.MuiButton-contained": {
-                  backgroundColor: "primary.main",
-                  color: "white",
-                },
-              }}
-            >
-              {period}
-            </Button>
-          ))}
-        </ButtonGroup>
       </HeaderBox>
 
       {/* Event Timeline Chart Placeholder */}
       <Card sx={{ mb: 4 }}>
         <CardContent sx={{ p: 3 }}>
-          <Box
-            sx={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              mb: 3,
-            }}
-          >
-            <Box>
-              <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                Events Timeline
-              </Typography>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                <Typography variant="body2" color="text.secondary">
-                  May 19 - May 25, 2024
-                </Typography>
-                <Chip
-                  label="Events: 494,827"
-                  size="small"
-                  sx={{
-                    backgroundColor: "primary.main",
-                    color: "white",
-                    fontWeight: 600,
-                  }}
-                />
-              </Box>
-            </Box>
-          </Box>
-
-          <ChartPlaceholder>
-            <BarChartIcon sx={{ fontSize: 48, color: "text.secondary" }} />
-            <Typography variant="body1" color="text.secondary">
-              Event Timeline Chart (Chart.js integration coming soon)
-            </Typography>
-          </ChartPlaceholder>
+          <EventsTimelineChart />
         </CardContent>
       </Card>
 

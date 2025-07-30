@@ -147,22 +147,26 @@ The primary timestamp for events is `metadata.creationTimestamp`. The `eventTime
 
 DuckDB provides powerful functions for creating time windows, which are perfect for analyzing trends.
 
-- `date_trunc('unit', timestamp)`: Truncates a timestamp to a specified unit (e.g., 'hour', 'day'). This is useful for creating fixed-size, non-overlapping (tumbling) windows.
-- `time_bucket(interval, timestamp)`: A more flexible function that buckets a timestamp into a specified interval (e.g., `INTERVAL 15 MINUTE`).
+A more flexible and powerful approach is to use `time_bucket(interval, timestamp)`, especially when combined with dynamic interval calculation on the frontend. This allows the granularity of the analysis to adapt to the selected time range.
 
-**Example: Hourly event count**
+Refer to the `getDynamicInterval` function in `src/utils/time.ts` for an example of how the frontend calculates an optimal interval to ensure chart readability.
+
+**Example: Dynamically bucketed hourly/daily/weekly event count**
+
+This query pattern is used by the `EventsTimelineChart` component. The `${interval}` is dynamically set by the frontend (e.g., '15 second', '1 hour', '1 day').
 
 ```sql
 SELECT
-    date_trunc('hour', metadata.creationTimestamp) AS hour,
+    time_bucket(INTERVAL '${interval}', metadata.creationTimestamp) AS time_bucket,
+    type,
     COUNT(*) AS count
 FROM $events
-WHERE reason = 'Scheduled'
-GROUP BY hour
-ORDER BY hour
+WHERE type IN ('Normal', 'Warning')
+GROUP BY time_bucket, type
+ORDER BY time_bucket, type
 ```
 
-**Example: 15-minute warning event breakdown**
+**Example: 15-minute warning event breakdown (fixed interval)**
 
 ```sql
 SELECT

@@ -10,12 +10,9 @@ export interface TimeRange {
 interface TimeRangeState extends TimeRange {
   rawFrom: string;
   rawTo: string;
-  refreshInterval: number | null;
   setTimeRange: (timeRange: TimeRange) => void;
-  setRefreshInterval: (interval: number | null) => void;
+  refreshTimeRange: () => void;
 }
-
-let refreshTimer: number | null = null;
 
 const parseTime = (timeStr: string): dayjs.Dayjs => {
   if (timeStr === "now") {
@@ -36,50 +33,30 @@ const isRelativeTime = (timeStr: string): boolean => {
   return timeStr.startsWith("now");
 };
 
-export const useTimeRangeStore = create<TimeRangeState>((set, get) => {
-  const startRefresh = () => {
-    if (refreshTimer) {
-      clearInterval(refreshTimer);
-      refreshTimer = null;
-    }
-
-    const { rawFrom, rawTo, refreshInterval } = get();
-    if (refreshInterval && (isRelativeTime(rawFrom) || isRelativeTime(rawTo))) {
-      refreshTimer = window.setInterval(() => {
-        set({
-          from: parseTime(rawFrom).format("YYYY-MM-DDTHH:mm:ssZ"),
-          to: parseTime(rawTo).format("YYYY-MM-DDTHH:mm:ssZ"),
-        });
-      }, refreshInterval);
-    }
-  };
-
-  const initialState = {
-    from: parseTime("now-30m").toISOString(),
-    to: parseTime("now").toISOString(),
-    rawFrom: "now-30m",
-    rawTo: "now",
-    refreshInterval: 15000, // 15 seconds
-    setTimeRange: ({ from, to }: TimeRange) => {
+export const useTimeRangeStore = create<TimeRangeState>((set, get) => ({
+  from: parseTime("now-30m").toISOString(),
+  to: parseTime("now").toISOString(),
+  rawFrom: "now-30m",
+  rawTo: "now",
+  setTimeRange: ({ from, to }: TimeRange) => {
+    set({
+      rawFrom: from,
+      rawTo: to,
+      from: parseTime(from).format("YYYY-MM-DDTHH:mm:ssZ"),
+      to: parseTime(to).format("YYYY-MM-DDTHH:mm:ssZ"),
+    });
+  },
+  refreshTimeRange: () => {
+    const { rawFrom, rawTo } = get();
+    // Only refresh if using relative time
+    if (isRelativeTime(rawFrom) || isRelativeTime(rawTo)) {
       set({
-        rawFrom: from,
-        rawTo: to,
-        from: parseTime(from).format("YYYY-MM-DDTHH:mm:ssZ"),
-        to: parseTime(to).format("YYYY-MM-DDTHH:mm:ssZ"),
+        from: parseTime(rawFrom).format("YYYY-MM-DDTHH:mm:ssZ"),
+        to: parseTime(rawTo).format("YYYY-MM-DDTHH:mm:ssZ"),
       });
-      startRefresh();
-    },
-    setRefreshInterval: (interval: number | null) => {
-      set({ refreshInterval: interval });
-      startRefresh();
-    },
-  };
-
-  // Start the refresh interval on initial load
-  setTimeout(startRefresh, 0);
-
-  return initialState;
-});
+    }
+  },
+}));
 
 export const useTimeRangeFromUrl = () => {
   const [, setLocation] = useLocation();
