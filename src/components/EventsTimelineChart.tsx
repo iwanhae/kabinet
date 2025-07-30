@@ -142,12 +142,10 @@ const EventsTimelineChart: React.FC = () => {
         bucketEnd = bucketStart.add(days, "day");
       }
 
-      const query = `SELECT * FROM $events 
-        WHERE metadata.creationTimestamp >= '${bucketStart.toISOString()}' 
-        AND metadata.creationTimestamp < '${bucketEnd.toISOString()}'
-        ORDER BY metadata.creationTimestamp DESC`;
+      const query = `metadata.creationTimestamp >= '${bucketStart.toISOString()}' 
+AND metadata.creationTimestamp < '${bucketEnd.toISOString()}'`;
 
-      setLocation(`/discover?query=${encodeURIComponent(query)}`);
+      setLocation(`/discover?where=${encodeURIComponent(query)}`);
     }
   };
 
