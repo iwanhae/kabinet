@@ -9,8 +9,10 @@ import {
 } from "@mui/material";
 import { useLocation } from "wouter";
 import MetricCard from "../components/MetricCard";
-import { SmallChartPlaceholder } from "../components/ChartPlaceholder";
 import EventsTimelineChart from "../components/EventsTimelineChart";
+import TopNoisyNamespaces from "../components/TopNoisyNamespaces";
+import TopWarningReasons from "../components/TopWarningReasons";
+import RecentCriticalEvents from "../components/RecentCriticalEvents";
 
 const HeaderBox = styled(Box)({
   display: "flex",
@@ -91,7 +93,7 @@ const Insight: React.FC = () => {
   };
 
   return (
-    <Box>
+    <Box style={{ width: "100%" }}>
       {/* Header */}
       <HeaderBox>
         <Box>
@@ -126,41 +128,23 @@ const Insight: React.FC = () => {
         ))}
       </Grid>
 
-      {/* Additional Section */}
+      {/* Problem Analysis Section */}
       <Box sx={{ mt: 6 }}>
         <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, mb: 3 }}>
-          Event Activity
+          Problem Analysis
         </Typography>
 
         <Grid container spacing={3}>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <Card>
-              <CardContent sx={{ p: 3 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                  Top Event Reasons
-                </Typography>
-                <SmallChartPlaceholder>
-                  <Typography variant="body2" color="text.secondary">
-                    Top Reasons Chart Placeholder
-                  </Typography>
-                </SmallChartPlaceholder>
-              </CardContent>
-            </Card>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <TopNoisyNamespaces />
           </Grid>
 
-          <Grid size={{ xs: 12, md: 6 }}>
-            <Card>
-              <CardContent sx={{ p: 3 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                  Namespace Activity
-                </Typography>
-                <SmallChartPlaceholder>
-                  <Typography variant="body2" color="text.secondary">
-                    Namespace Heatmap Placeholder
-                  </Typography>
-                </SmallChartPlaceholder>
-              </CardContent>
-            </Card>
+          <Grid size={{ xs: 12, md: 4 }}>
+            <TopWarningReasons />
+          </Grid>
+
+          <Grid size={{ xs: 12, md: 4 }}>
+            <RecentCriticalEvents />
           </Grid>
         </Grid>
       </Box>
