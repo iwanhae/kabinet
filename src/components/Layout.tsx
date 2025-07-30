@@ -21,6 +21,7 @@ import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import { useTheme } from "../contexts/ThemeContext";
+import { TimeRangePicker } from "./TimeRangePicker";
 
 const drawerWidth = 260;
 
@@ -102,18 +103,21 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               }}
             />
           </Box>
-          <IconButton
-            color="inherit"
-            onClick={toggleTheme}
-            sx={{
-              borderRadius: 2,
-              "&:hover": {
-                backgroundColor: "rgba(29, 155, 240, 0.1)",
-              },
-            }}
-          >
-            {isDarkMode ? <LightModeIcon /> : <DarkModeIcon />}
-          </IconButton>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <TimeRangePicker />
+            <IconButton
+              color="inherit"
+              onClick={toggleTheme}
+              sx={{
+                borderRadius: 2,
+                "&:hover": {
+                  backgroundColor: "rgba(29, 155, 240, 0.1)",
+                },
+              }}
+            >
+              {isDarkMode ? <LightModeIcon /> : <DarkModeIcon />}
+            </IconButton>
+          </Box>
         </Toolbar>
       </StyledAppBar>
       <StyledDrawer variant="permanent">
