@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Typography, Box, Alert, CircularProgress } from "@mui/material";
+import { useLocation, useSearch } from "wouter";
 import { invalidateEventsQuery, useEventsQuery } from "../hooks/useEventsQuery";
 import type { EventResult } from "../types/events";
 import QueryForm from "../components/QueryForm";
@@ -7,10 +8,23 @@ import EventsTable from "../components/EventsTable";
 import EventDetailDrawer from "../components/EventDetailDrawer";
 
 const Discover: React.FC = () => {
+  const [, setLocation] = useLocation();
+  const search = useSearch();
   const [whereClause, setWhereClause] = useState("");
   const [executedQuery, setExecutedQuery] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventResult | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // URL의 where 파라미터를 읽어서 executedQuery 초기값으로 설정
+  useEffect(() => {
+    const searchParams = new URLSearchParams(search);
+    const whereParam = searchParams.get("where");
+
+    if (whereParam) {
+      setExecutedQuery(whereParam);
+      setWhereClause(whereParam);
+    }
+  }, [search]);
 
   // 쿼리가 실행된 경우에만 데이터를 가져옴
   const query = executedQuery
@@ -22,6 +36,12 @@ const Discover: React.FC = () => {
   const handleExecuteQuery = () => {
     const trimmedWhereClause = whereClause.trim() || "1=1";
     setExecutedQuery(trimmedWhereClause);
+
+    // URL의 where 파라미터 업데이트
+    const searchParams = new URLSearchParams(window.location.search);
+    searchParams.set("where", trimmedWhereClause);
+    setLocation(`/discover?${searchParams.toString()}`);
+
     invalidateEventsQuery();
   };
 

@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import { styled } from "@mui/material/styles";
 import { Close } from "@mui/icons-material";
+import { Link } from "wouter";
 import type { EventResult } from "../types/events";
 
 interface EventDetailDrawerProps {
@@ -55,6 +56,44 @@ const DrawerContent = styled(Box)(({ theme }) => ({
   width: 500,
 }));
 
+const ClickableCell: React.FC<{
+  field: string;
+  value: string;
+  onClose: () => void;
+}> = ({ field, value, onClose }) => {
+  if (!value) {
+    return <TableCell />;
+  }
+  const query = `${field}='${value}'`;
+  const href = `/discover?where=${encodeURIComponent(query)}`;
+  return (
+    <TableCell>
+      <Link href={href} onClick={onClose}>
+        {value}
+      </Link>
+    </TableCell>
+  );
+};
+
+const ClickableChipCell: React.FC<{
+  field: string;
+  value: string;
+  onClose: () => void;
+}> = ({ field, value, onClose }) => {
+  if (!value) {
+    return <TableCell />;
+  }
+  const query = `${field}='${value}'`;
+  const href = `/discover?where=${encodeURIComponent(query)}`;
+  return (
+    <TableCell>
+      <Link href={href} onClick={onClose}>
+        <EventTypeChip label={value} size="small" eventType={value} />
+      </Link>
+    </TableCell>
+  );
+};
+
 const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({
   open,
   event,
@@ -94,37 +133,51 @@ const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({
                       >
                         Type
                       </TableCell>
-                      <TableCell>
-                        <EventTypeChip
-                          label={event.type}
-                          size="small"
-                          eventType={event.type}
-                        />
-                      </TableCell>
+                      <ClickableChipCell
+                        field="type"
+                        value={event.type}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     <TableRow>
                       <TableCell component="th" scope="row">
                         Reason
                       </TableCell>
-                      <TableCell>{event.reason}</TableCell>
+                      <ClickableCell
+                        field="reason"
+                        value={event.reason}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     <TableRow>
                       <TableCell component="th" scope="row">
                         Object Kind
                       </TableCell>
-                      <TableCell>{event.involvedObject.kind}</TableCell>
+                      <ClickableCell
+                        field="involvedObject.kind"
+                        value={event.involvedObject.kind}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     <TableRow>
                       <TableCell component="th" scope="row">
                         Object Namespace
                       </TableCell>
-                      <TableCell>{event.involvedObject.namespace}</TableCell>
+                      <ClickableCell
+                        field="involvedObject.namespace"
+                        value={event.involvedObject.namespace || "default"}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     <TableRow>
                       <TableCell component="th" scope="row">
                         Object Name
                       </TableCell>
-                      <TableCell>{event.involvedObject.name}</TableCell>
+                      <ClickableCell
+                        field="involvedObject.name"
+                        value={event.involvedObject.name}
+                        onClose={onClose}
+                      />
                     </TableRow>
                   </TableBody>
                 </Table>
@@ -311,9 +364,11 @@ const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({
                       >
                         Namespace
                       </TableCell>
-                      <TableCell>
-                        {event.metadata.namespace || "default"}
-                      </TableCell>
+                      <ClickableCell
+                        field="metadata.namespace"
+                        value={event.metadata.namespace || "default"}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     {event.action && (
                       <TableRow>
@@ -348,7 +403,11 @@ const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({
                       >
                         Kind
                       </TableCell>
-                      <TableCell>{event.involvedObject.kind}</TableCell>
+                      <ClickableCell
+                        field="involvedObject.kind"
+                        value={event.involvedObject.kind}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     <TableRow>
                       <TableCell
@@ -358,7 +417,11 @@ const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({
                       >
                         Name
                       </TableCell>
-                      <TableCell>{event.involvedObject.name}</TableCell>
+                      <ClickableCell
+                        field="involvedObject.name"
+                        value={event.involvedObject.name}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     <TableRow>
                       <TableCell
@@ -368,9 +431,11 @@ const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({
                       >
                         Namespace
                       </TableCell>
-                      <TableCell>
-                        {event.involvedObject.namespace || "default"}
-                      </TableCell>
+                      <ClickableCell
+                        field="involvedObject.namespace"
+                        value={event.involvedObject.namespace || "default"}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     <TableRow>
                       <TableCell
@@ -456,7 +521,11 @@ const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({
                       >
                         Source Component
                       </TableCell>
-                      <TableCell>{event.source.component}</TableCell>
+                      <ClickableCell
+                        field="source.component"
+                        value={event.source.component}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     <TableRow>
                       <TableCell
@@ -466,7 +535,11 @@ const EventDetailDrawer: React.FC<EventDetailDrawerProps> = ({
                       >
                         Source Host
                       </TableCell>
-                      <TableCell>{event.source.host}</TableCell>
+                      <ClickableCell
+                        field="source.host"
+                        value={event.source.host}
+                        onClose={onClose}
+                      />
                     </TableRow>
                     {event.reportingComponent && (
                       <TableRow>
