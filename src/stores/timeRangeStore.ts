@@ -47,8 +47,8 @@ export const useTimeRangeStore = create<TimeRangeState>((set, get) => {
     if (refreshInterval && (isRelativeTime(rawFrom) || isRelativeTime(rawTo))) {
       refreshTimer = window.setInterval(() => {
         set({
-          from: parseTime(rawFrom).toISOString(),
-          to: parseTime(rawTo).toISOString(),
+          from: parseTime(rawFrom).format("YYYY-MM-DDTHH:mm:ssZ"),
+          to: parseTime(rawTo).format("YYYY-MM-DDTHH:mm:ssZ"),
         });
       }, refreshInterval);
     }
@@ -64,8 +64,8 @@ export const useTimeRangeStore = create<TimeRangeState>((set, get) => {
       set({
         rawFrom: from,
         rawTo: to,
-        from: parseTime(from).toISOString(),
-        to: parseTime(to).toISOString(),
+        from: parseTime(from).format("YYYY-MM-DDTHH:mm:ssZ"),
+        to: parseTime(to).format("YYYY-MM-DDTHH:mm:ssZ"),
       });
       startRefresh();
     },

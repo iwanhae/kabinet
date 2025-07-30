@@ -9,8 +9,10 @@ import {
   Box,
   Typography,
   styled,
+  Collapse,
+  Link,
 } from "@mui/material";
-import { AccessTime, ArrowDropDown } from "@mui/icons-material";
+import { AccessTime, ArrowDropDown, HelpOutline } from "@mui/icons-material";
 import { DateTimePicker } from "@mui/x-date-pickers/DateTimePicker";
 import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
@@ -81,7 +83,7 @@ const QuickRangesList = styled(Box)({
   maxHeight: "300px",
 });
 
-const AbsoluteTimeRangeContainer = styled(Box)(({ theme }) => ({
+const CustomTimeRangeContainer = styled(Box)(({ theme }) => ({
   flex: 1,
   padding: theme.spacing(3),
   display: "flex",
@@ -100,6 +102,17 @@ const TimezoneInfo = styled(Box)(({ theme }) => ({
   color: theme.palette.text.secondary,
   ...(theme.palette.mode === "dark" && {
     backgroundColor: theme.palette.grey[800],
+  }),
+}));
+
+const HelpText = styled(Box)(({ theme }) => ({
+  padding: theme.spacing(1.5),
+  backgroundColor: theme.palette.grey[50],
+  borderRadius: theme.spacing(1),
+  fontSize: "0.75rem",
+  color: theme.palette.text.secondary,
+  ...(theme.palette.mode === "dark" && {
+    backgroundColor: theme.palette.grey[900],
   }),
 }));
 
@@ -152,25 +165,23 @@ export const TimeRangePicker = () => {
   const { from, to } = useTimeRangeStore();
   const setTimeRangeWithUrl = useTimeRangeFromUrl();
 
-  const [tempFrom, setTempFrom] = useState(from);
-  const [tempTo, setTempTo] = useState(to);
   const [tempFromDate, setTempFromDate] = useState<Dayjs | null>(
     parseTimeString(from),
   );
   const [tempToDate, setTempToDate] = useState<Dayjs | null>(
     parseTimeString(to),
   );
-  const [isAbsoluteMode, setIsAbsoluteMode] = useState(
-    !isRelativeTime(from) || !isRelativeTime(to),
-  );
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [tempFromText, setTempFromText] = useState(from);
+  const [tempToText, setTempToText] = useState(to);
 
   const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     setAnchorEl(event.currentTarget);
-    setTempFrom(from);
-    setTempTo(to);
     setTempFromDate(parseTimeString(from));
     setTempToDate(parseTimeString(to));
-    setIsAbsoluteMode(!isRelativeTime(from) || !isRelativeTime(to));
+    setTempFromText(from);
+    setTempToText(to);
+    setShowAdvanced(isRelativeTime(from) || isRelativeTime(to));
   };
 
   const handleClose = () => {
@@ -184,25 +195,44 @@ export const TimeRangePicker = () => {
 
   const handleDateChange = (field: "from" | "to", date: Dayjs | null) => {
     if (date && date.isValid()) {
-      const timeString = formatTimeString(date);
       if (field === "from") {
         setTempFromDate(date);
-        setTempFrom(timeString);
+        setTempFromText(formatTimeString(date));
       } else {
         setTempToDate(date);
-        setTempTo(timeString);
+        setTempToText(formatTimeString(date));
+      }
+    }
+  };
+
+  const handleTextChange = (field: "from" | "to", value: string) => {
+    if (field === "from") {
+      setTempFromText(value);
+      const parsed = parseTimeString(value);
+      if (parsed) {
+        setTempFromDate(parsed);
+      }
+    } else {
+      setTempToText(value);
+      const parsed = parseTimeString(value);
+      if (parsed) {
+        setTempToDate(parsed);
       }
     }
   };
 
   const handleApply = () => {
-    if (isAbsoluteMode && tempFromDate && tempToDate) {
-      setTimeRangeWithUrl(
-        formatTimeString(tempFromDate),
-        formatTimeString(tempToDate),
-      );
+    if (showAdvanced) {
+      // Use text values for advanced mode (supports relative time)
+      setTimeRangeWithUrl(tempFromText, tempToText);
     } else {
-      setTimeRangeWithUrl(tempFrom, tempTo);
+      // Use date picker values for simple mode
+      if (tempFromDate && tempToDate) {
+        setTimeRangeWithUrl(
+          formatTimeString(tempFromDate),
+          formatTimeString(tempToDate),
+        );
+      }
     }
     handleClose();
   };
@@ -312,31 +342,12 @@ export const TimeRangePicker = () => {
               </QuickRangesList>
             </QuickRangesContainer>
 
-            <AbsoluteTimeRangeContainer>
+            <CustomTimeRangeContainer>
               <Typography variant="h6" gutterBottom fontWeight={600}>
-                Absolute time range
+                Custom time range
               </Typography>
 
-              <Box
-                sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}
-              >
-                <Button
-                  variant={!isAbsoluteMode ? "contained" : "outlined"}
-                  size="small"
-                  onClick={() => setIsAbsoluteMode(false)}
-                >
-                  Relative
-                </Button>
-                <Button
-                  variant={isAbsoluteMode ? "contained" : "outlined"}
-                  size="small"
-                  onClick={() => setIsAbsoluteMode(true)}
-                >
-                  Absolute
-                </Button>
-              </Box>
-
-              {isAbsoluteMode ? (
+              {!showAdvanced ? (
                 <>
                   <DateTimePicker
                     label="From"
@@ -365,22 +376,56 @@ export const TimeRangePicker = () => {
                 <>
                   <TextField
                     label="From"
-                    value={tempFrom}
-                    onChange={(e) => setTempFrom(e.target.value)}
+                    value={tempFromText}
+                    onChange={(e) => handleTextChange("from", e.target.value)}
                     fullWidth
                     size="small"
-                    placeholder="e.g., now-1h, now-30m"
+                    placeholder="e.g., now-1h, 2025-01-01T00:00:00Z"
                   />
                   <TextField
                     label="To"
-                    value={tempTo}
-                    onChange={(e) => setTempTo(e.target.value)}
+                    value={tempToText}
+                    onChange={(e) => handleTextChange("to", e.target.value)}
                     fullWidth
                     size="small"
-                    placeholder="e.g., now"
+                    placeholder="e.g., now, 2025-01-01T12:00:00Z"
                   />
                 </>
               )}
+
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <HelpOutline sx={{ fontSize: 16, color: "text.secondary" }} />
+                <Link
+                  component="button"
+                  variant="caption"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  sx={{ textDecoration: "none" }}
+                >
+                  {showAdvanced
+                    ? "Use date picker instead"
+                    : "Use relative time syntax (now-1h, now-30m, etc.)"}
+                </Link>
+              </Box>
+
+              <Collapse in={showAdvanced}>
+                <HelpText>
+                  <Typography variant="caption" display="block" gutterBottom>
+                    <strong>Relative time examples:</strong>
+                  </Typography>
+                  <Typography variant="caption" display="block">
+                    • <code>now</code> - Current time
+                  </Typography>
+                  <Typography variant="caption" display="block">
+                    • <code>now-5m</code> - 5 minutes ago
+                  </Typography>
+                  <Typography variant="caption" display="block">
+                    • <code>now-1h</code> - 1 hour ago
+                  </Typography>
+                  <Typography variant="caption" display="block">
+                    • <code>now-3d</code> - 3 days ago
+                  </Typography>
+                </HelpText>
+              </Collapse>
 
               <TimezoneInfo>
                 <Typography variant="body2" component="span">
@@ -403,7 +448,7 @@ export const TimeRangePicker = () => {
                   Apply time range
                 </Button>
               </Box>
-            </AbsoluteTimeRangeContainer>
+            </CustomTimeRangeContainer>
           </PopoverContent>
         </Popover>
       </TimeRangePickerContainer>
