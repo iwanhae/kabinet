@@ -1,5 +1,5 @@
-import React from 'react';
-import { Typography } from '@mui/material';
+import React from "react";
+import { Typography } from "@mui/material";
 
 const Discover: React.FC = () => {
   return (
@@ -9,4 +9,4 @@ const Discover: React.FC = () => {
   );
 };
 
-export default Discover; 
+export default Discover;
