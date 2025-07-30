@@ -7,6 +7,7 @@ Welcome to the Kube Event Analyzer frontend! This guide provides the necessary i
 - **Framework**: [React](https://reactjs.org/) with [Vite](https://vitejs.dev/)
 - **Language**: [TypeScript](https://www.typescriptlang.org/)
 - **UI Library**: [Material-UI (MUI)](https://mui.com/)
+- **Data Fetching**: [SWR](https://swr.vercel.app/)
 - **State Management**: [Zustand](https://github.com/pmndrs/zustand)
 - **Date & Time**: [Day.js](https://day.js.org/) with `@mui/x-date-pickers`
 - **Routing**: [Wouter](https://github.com/molefrog/wouter)
@@ -38,106 +39,107 @@ The `src` directory is organized as follows:
 ```
 src/
 ├── assets/         # Static assets like images and SVGs
-├── components/     # Reusable React components (e.g., Layout, MetricCard, TimeRangePicker)
-├── contexts/       # React contexts for global state (e.g., ThemeContext)
-├── pages/          # Page components corresponding to routes (e.g., Insight, Discover)
-├── stores/         # Zustand stores for global state management (e.g., timeRangeStore)
+├── components/     # Reusable React components
+├── contexts/       # React contexts for global state
+├── hooks/          # Custom React hooks (e.g., for data fetching)
+├── pages/          # Page components corresponding to routes
+├── stores/         # Zustand stores for global state management
 ├── App.tsx         # Main application component, handles routing and global setup
 ├── main.tsx        # Application entry point
 ├── index.css       # Global styles
-└── theme.ts        # MUI theme configuration (colors, typography, etc.)
+└── theme.ts        # MUI theme configuration
 ```
 
 ---
 
 ## Core Concepts & Conventions
 
-### 1. Global State: Time Range Management
+### 1. Data Fetching with `useEventsQuery`
 
-A critical piece of global state is the **time range**, which dictates the query window for fetching and displaying event data. This state is managed by Zustand and is designed to be accessible from any component.
+All data fetching from the backend API should be handled by the `useEventsQuery` custom hook. This hook abstracts away the complexities of data fetching, caching, and state management, allowing components to focus solely on displaying the data.
 
-**Location**: `src/stores/timeRangeStore.ts`
+**Location**: `src/hooks/useEventsQuery.ts`
 
-**Core Idea**: The time range (`from`, `to`) is stored in a Zustand store and synchronized with the URL's query parameters. This ensures that the selected time range persists across page navigations and browser refreshes.
+**Core Idea**: The hook takes a SQL query string as an argument and automatically combines it with the current global time range from the Zustand store. It uses **SWR** to handle caching, revalidation, and managing loading/error states.
 
 **How to Use**:
 
-**A. Accessing the Current Time Range**
+To fetch data, import the hook and pass your SQL query. The hook is **generic**, meaning you must provide a type or interface that describes the shape of the expected result objects. This provides full type safety for your data.
 
-To get the current time range in any component, use the `useTimeRangeStore` hook. This provides direct access to the `from` and `to` values.
-
-**Example (`src/pages/Discover.tsx`)**:
+**Example (`src/pages/Insight.tsx`)**:
 
 ```tsx
-import { useTimeRangeStore } from "../stores/timeRangeStore";
+import React from "react";
+import { useEventsQuery } from "../hooks/useEventsQuery";
+import { CircularProgress, Alert, Paper, Typography } from "@mui/material";
 
-const Discover = () => {
-  const { from, to } = useTimeRangeStore();
+// 1. Define the type for the expected data objects
+interface ReasonCount {
+  reason: string;
+  count: number;
+}
 
-  useEffect(() => {
-    // Fetch data whenever the time range changes
-    console.log(`Querying data from ${from} to ${to}`);
-    // fetchData(from, to);
-  }, [from, to]);
+const TopReasonsChart = () => {
+  // 2. Define the SQL query
+  const query =
+    "SELECT reason, COUNT(*) as count FROM $events WHERE type = 'Warning' GROUP BY reason ORDER BY count DESC LIMIT 10";
+
+  // 3. Call the hook with the type and query
+  const { data, error, isLoading } = useEventsQuery<ReasonCount>(query);
+
+  if (isLoading) return <CircularProgress />;
+  if (error)
+    return <Alert severity="error">Failed to load data: {error.message}</Alert>;
 
   return (
-    <div>
-      Data for {from} - {to}
-    </div>
+    <Paper>
+      <Typography variant="h6">Top 10 Warning Reasons</Typography>
+      <ul>
+        {/* 4. 'data' is now fully typed as 'ReasonCount[] | undefined' */}
+        {data?.map((item) => (
+          <li key={item.reason}>
+            {item.reason}: {item.count}
+          </li>
+        ))}
+      </ul>
+    </Paper>
   );
 };
 ```
 
-**B. Updating the Time Range**
+**Conditional Fetching**: If you pass `null` as the query, the hook will not trigger a request. This is useful when you need to wait for some condition to be met before fetching data.
 
-You should **not** update the time range directly. Instead, use the `TimeRangePicker` component located in the main layout. It provides a user-friendly interface for selecting quick ranges (e.g., "Last 15 minutes") or absolute time frames.
+### 2. Global State: Time Range Management
 
-The `TimeRangePicker` uses a custom hook, `useTimeRangeFromUrl`, which handles two key tasks:
+A critical piece of global state is the **time range**, which is automatically used by the `useEventsQuery` hook.
 
-1.  Updating the Zustand store.
-2.  Updating the URL query parameters (`?from=...&to=...`).
+**Location**: `src/stores/timeRangeStore.ts`
 
-This synchronization is crucial. The application's entry point (`App.tsx`) reads these URL parameters on initial load to set the store's state, ensuring persistence.
+**Core Idea**: The time range (`from`, `to`) is stored in a Zustand store and synchronized with the URL's query parameters. This ensures that the selected time range persists across page navigations and browser refreshes. Any component using `useEventsQuery` will automatically re-fetch data when the time range changes.
 
-### 2. Styling
+**How to Update**: You should **not** update the time range directly. Instead, use the `TimeRangePicker` component located in the main layout. It provides a user-friendly interface for selecting quick ranges or absolute time frames and handles updating both the Zustand store and the URL parameters.
+
+### 3. Styling
 
 This project uses **Material-UI (MUI)** as its primary component library. For styling, we follow a specific convention to maintain consistency and readability.
 
-**Primary Method: `styled` API**
+- **Primary Method: `styled` API**: For components with complex or reusable styles, always prefer using the `styled` utility from `@mui/material/styles`.
+- **Secondary Method: `sx` Prop**: For simple, one-off styles, it's acceptable to use the `sx` prop.
+- **Theme**: All theme-related values (colors, fonts, etc.) are defined in `src/theme.ts`. Always use theme tokens (e.g., `theme.palette.primary.main`) in styled components.
 
-For components with complex or reusable styles, always prefer using the `styled` utility from `@mui/material/styles`.
-
-- **Why?** It keeps JSX clean, separates styling concerns, and makes styles reusable.
-- **Where?** Define styled components at the top of the file they are used in.
-
-**Secondary Method: `sx` Prop**
-
-For simple, one-off styles that are not reused, it's acceptable to use the `sx` prop.
-
-- **Why?** It's convenient for minor tweaks without the overhead of creating a new styled component.
-
-**Theme & Theming**
-
-- All theme-related values (colors, fonts, border-radius, etc.) are defined in `src/theme.ts`. We have separate configurations for `lightTheme` and `darkTheme`.
-- The theme is provided to the entire application via `ThemeProvider` in `src/contexts/ThemeContext.tsx`.
-- When creating styled components, always use theme tokens (e.g., `theme.palette.primary.main`) instead of hard-coded values.
-- The dark/light mode toggle logic is managed within `ThemeContext`.
-
-### 3. Routing
+### 4. Routing
 
 We use **Wouter** for client-side routing due to its minimal footprint and hook-based API.
 
-- **Route Definitions**: All routes are defined in `src/App.tsx` using the `<Switch>` and `<Route>` components.
-- **Navigation**:
-  - To create navigation links, use the `<Link>` component from `wouter`.
-  - For programmatic navigation, use the `useLocation` hook: `const [, setLocation] = useLocation(); setLocation('/new-path');`.
+- **Route Definitions**: All routes are defined in `src/App.tsx`.
+- **Navigation**: Use the `<Link>` component for links and the `useLocation` hook for programmatic navigation.
 
-### 4. Creating New Components & Pages
+### 5. Creating New Components & Pages
 
-- **Reusable Components**: If a component is used in multiple places (e.g., buttons, cards, inputs), create it inside `src/components/`.
-- **Page Components**: A page is a component that maps directly to a route. Create new pages inside `src/pages/` and add the corresponding route to `App.tsx`.
-- **Component Logic**: Keep components focused on their primary purpose. Separate complex logic into custom hooks if necessary.
+- **Reusable Components**: Create inside `src/components/`.
+- **Page Components**: Create inside `src/pages/` and add the corresponding route to `App.tsx`.
+- **Component Logic**: Keep components focused. Separate complex logic into custom hooks (like `useEventsQuery`).
 
 ---
 
-By following these guidelines, we can ensure the frontend codebase remains clean, consistent, and easy to maintain. If you have any questions, please refer to the existing components as a reference.
+By following these guidelines, we can ensure the frontend codebase remains clean, consistent, and easy to maintain.
