@@ -63,7 +63,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		log.Println("Starting data lifecycle manager...")
-		storage.ManageDataLifecycle(ctx, 30*time.Minute, 10*1024*1024*1024) // 30 min interval, 10GB limit
+		storage.ManageDataLifecycle(ctx, 3*time.Hour, 10*1024*1024*1024) // 3 hour interval, 10GB limit
 		log.Println("Data lifecycle manager finished")
 	}()
 
