@@ -2,6 +2,7 @@ import { Route, Switch } from "wouter";
 import Layout from "./components/Layout";
 import Insight from "./pages/Insight";
 import Discover from "./pages/Discover";
+import { RefreshProvider } from "./contexts/RefreshContext";
 
 const AppContent = () => {
   return (
@@ -14,9 +15,11 @@ const AppContent = () => {
 
 function App() {
   return (
-    <Layout>
-      <AppContent />
-    </Layout>
+    <RefreshProvider>
+      <Layout>
+        <AppContent />
+      </Layout>
+    </RefreshProvider>
   );
 }
 
