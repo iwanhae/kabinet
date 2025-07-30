@@ -5,14 +5,10 @@ import {
   AppBar,
   Toolbar,
   Typography,
-  Drawer,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
   IconButton,
   Chip,
+  Tab,
+  Tabs,
 } from "@mui/material";
 import { styled, type Theme } from "@mui/material/styles";
 import { Link, useLocation } from "wouter";
@@ -23,45 +19,32 @@ import DarkModeIcon from "@mui/icons-material/DarkMode";
 import { useTheme } from "../contexts/ThemeContext";
 import { TimeRangePicker } from "./TimeRangePicker";
 
-const drawerWidth = 260;
-
 const StyledAppBar = styled(AppBar)(({ theme }: { theme: Theme }) => ({
-  zIndex: theme.zIndex.drawer + 1,
   boxShadow: "none",
+  borderBottom: `1px solid ${theme.palette.divider}`,
 }));
 
-const StyledDrawer = styled(Drawer)({
-  width: drawerWidth,
-  flexShrink: 0,
-  [`& .MuiDrawer-paper`]: {
-    width: drawerWidth,
-    boxSizing: "border-box",
-    borderRight: "none",
-  },
-});
-
 const MainContent = styled("main")(({ theme }: { theme: Theme }) => ({
-  flexGrow: 1,
   padding: theme.spacing(3),
   backgroundColor: theme.palette.background.default,
   minHeight: "100vh",
+  paddingTop: theme.spacing(12), // AppBar 높이만큼 여백 추가
 }));
 
-const StyledListItemButton = styled(ListItemButton)(({ theme }) => ({
-  paddingTop: theme.spacing(1.5),
-  paddingBottom: theme.spacing(1.5),
-  paddingLeft: theme.spacing(3),
-  paddingRight: theme.spacing(3),
-  borderRadius: 3,
-  "&.Mui-selected": {
+const StyledTabs = styled(Tabs)(({ theme }) => ({
+  minHeight: 48,
+  "& .MuiTab-root": {
+    minHeight: 48,
+    textTransform: "none",
+    fontWeight: 600,
+    fontSize: "1rem",
+    "&.Mui-selected": {
+      color: theme.palette.primary.main,
+    },
+  },
+  "& .MuiTabs-indicator": {
     backgroundColor: theme.palette.primary.main,
-    color: "white",
-    "&:hover": {
-      backgroundColor: theme.palette.primary.dark,
-    },
-    "& .MuiListItemIcon-root": {
-      color: "white",
-    },
+    height: 3,
   },
 }));
 
@@ -78,31 +61,60 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { text: "Discover", href: "/discover", icon: <TravelExploreIcon /> },
   ];
 
+  // 현재 경로에 맞는 탭 인덱스 계산
+  const currentTabIndex = menuItems.findIndex(item => item.href === location);
+
   return (
-    <Box sx={{ display: "flex" }}>
+    <Box>
       <CssBaseline />
       <StyledAppBar position="fixed">
-        <Toolbar sx={{ justifyContent: "space-between" }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-            <Typography
-              variant="h6"
-              noWrap
-              component="div"
-              sx={{ fontWeight: 700 }}
+        <Toolbar sx={{ justifyContent: "space-between", minHeight: 64 }}>
+          {/* 왼쪽: 브랜드와 네비게이션 */}
+          <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <Typography
+                variant="h6"
+                noWrap
+                component="div"
+                sx={{ fontWeight: 700 }}
+              >
+                Kube Event Analyzer
+              </Typography>
+              <Chip
+                label="Analytics"
+                size="small"
+                sx={{
+                  backgroundColor: "primary.main",
+                  color: "white",
+                  fontWeight: 600,
+                  fontSize: "0.75rem",
+                }}
+              />
+            </Box>
+            
+            {/* 탭 네비게이션 */}
+            <StyledTabs
+              value={currentTabIndex >= 0 ? currentTabIndex : 0}
+              sx={{ ml: 2 }}
             >
-              Kube Event Analyzer
-            </Typography>
-            <Chip
-              label="Analytics"
-              size="small"
-              sx={{
-                backgroundColor: "primary.main",
-                color: "white",
-                fontWeight: 600,
-                fontSize: "0.75rem",
-              }}
-            />
+              {menuItems.map((item, index) => (
+                <Tab
+                  key={item.text}
+                  label={item.text}
+                  icon={item.icon}
+                  iconPosition="start"
+                  component={Link}
+                  href={item.href}
+                  sx={{ 
+                    minWidth: 120,
+                    gap: 1,
+                  }}
+                />
+              ))}
+            </StyledTabs>
           </Box>
+
+          {/* 오른쪽: 시간 선택기와 테마 토글 */}
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <TimeRangePicker />
             <IconButton
@@ -120,38 +132,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </Box>
         </Toolbar>
       </StyledAppBar>
-      <StyledDrawer variant="permanent">
-        <Toolbar />
-        <Box sx={{ overflow: "auto", p: 1 }}>
-          <List sx={{ pt: 2 }}>
-            {menuItems.map((item) => (
-              <ListItem key={item.text} disablePadding sx={{ mb: 1 }}>
-                <Link
-                  href={item.href}
-                  style={{ textDecoration: "none", width: "100%" }}
-                >
-                  <StyledListItemButton selected={location === item.href}>
-                    <ListItemIcon sx={{ minWidth: 40 }}>
-                      {item.icon}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary={item.text}
-                      slotProps={{
-                        primary: {
-                          fontWeight: location === item.href ? 700 : 500,
-                          fontSize: "1rem",
-                        },
-                      }}
-                    />
-                  </StyledListItemButton>
-                </Link>
-              </ListItem>
-            ))}
-          </List>
-        </Box>
-      </StyledDrawer>
+      
+      {/* 메인 콘텐츠 - 이제 전체 너비 사용 */}
       <MainContent>
-        <Toolbar />
         {children}
       </MainContent>
     </Box>
