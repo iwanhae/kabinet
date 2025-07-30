@@ -1,5 +1,5 @@
 import useSWR, { mutate, type SWRResponse } from "swr";
-import { useTimeRangeStore } from "../stores/timeRangeStore";
+import { useTimeRange } from "./useUrlParams";
 
 /**
  * Represents the structure of the API response for a successful query.
@@ -84,7 +84,7 @@ const fetcher = async <T>(
 export const useEventsQuery = <T extends Record<string, any>>(
   query: string | null,
 ): SWRResponse<T[], Error> => {
-  const { from, to } = useTimeRangeStore();
+  const { from, to } = useTimeRange();
 
   const key = query ? ["/events", query, from, to] : null;
 

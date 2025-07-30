@@ -3,10 +3,10 @@ import Chart from "react-apexcharts";
 import { type ApexOptions } from "apexcharts";
 import { Box, Typography, CircularProgress, Alert, Chip } from "@mui/material";
 import { useEventsQuery } from "../hooks/useEventsQuery";
-import { useTimeRangeStore } from "../stores/timeRangeStore";
+import { useTimeRange } from "../hooks/useUrlParams";
 import { getDynamicInterval } from "../utils/time";
 import dayjs from "dayjs";
-import { useQueryParams } from "../hooks/useUrlParams";
+import { useUrlParams } from "../hooks/useUrlParams";
 
 interface EventTimelineData {
   time_bucket: string;
@@ -18,9 +18,8 @@ interface Props {
 }
 
 const EventsTimelineChart: React.FC<Props> = ({ where = "1=1" }) => {
-  const { from, to } = useTimeRangeStore();
-  const { setWhereClause } = useQueryParams();
-  const { setTimeRange } = useTimeRangeStore();
+  const { from, to } = useTimeRange();
+  const { updateParams } = useUrlParams();
 
   const query = useMemo(() => {
     const interval = getDynamicInterval(from, to);
@@ -146,11 +145,11 @@ const EventsTimelineChart: React.FC<Props> = ({ where = "1=1" }) => {
         bucketEnd = bucketStart.add(days, "day");
       }
 
-      setTimeRange({
+      updateParams({
         from: bucketStart.toISOString(),
         to: bucketEnd.toISOString(),
+        where: where,
       });
-      setWhereClause(where);
     }
   };
 

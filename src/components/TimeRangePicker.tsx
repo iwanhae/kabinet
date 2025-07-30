@@ -26,10 +26,8 @@ import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 import dayjs, { Dayjs } from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
-import {
-  useTimeRangeFromUrl,
-  useTimeRangeStore,
-} from "../stores/timeRangeStore";
+import { useTimeRange } from "../hooks/useUrlParams";
+import { isRelativeTime } from "../utils/timeRange";
 
 // Configure dayjs plugins
 dayjs.extend(utc);
@@ -150,8 +148,8 @@ const formatTimeString = (date: Dayjs): string => {
   return date.toISOString();
 };
 
-const isRelativeTime = (timeStr: string): boolean => {
-  return timeStr === "now" || timeStr.startsWith("now-");
+const formatForDisplay = (isoString: string): string => {
+  return dayjs(isoString).format("MMM D, YYYY, HH:mm:ss");
 };
 
 // Get current timezone info
@@ -169,8 +167,8 @@ const getCurrentTimezone = () => {
 
 export const TimeRangePicker = () => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
-  const { from, to, rawFrom, rawTo, refreshTimeRange } = useTimeRangeStore();
-  const setTimeRangeWithUrl = useTimeRangeFromUrl();
+  const { from, to, rawFrom, rawTo, refreshTimeRange, setTimeRange } =
+    useTimeRange();
 
   const [tempFromDate, setTempFromDate] = useState<Dayjs | null>(
     parseTimeString(from),
@@ -196,7 +194,7 @@ export const TimeRangePicker = () => {
   };
 
   const handleQuickRangeSelect = (from: string, to: string) => {
-    setTimeRangeWithUrl(from, to);
+    setTimeRange(from, to);
     handleClose();
   };
 
@@ -231,11 +229,11 @@ export const TimeRangePicker = () => {
   const handleApply = () => {
     if (showAdvanced) {
       // Use text values for advanced mode (supports relative time)
-      setTimeRangeWithUrl(tempFromText, tempToText);
+      setTimeRange(tempFromText, tempToText);
     } else {
       // Use date picker values for simple mode
       if (tempFromDate && tempToDate) {
-        setTimeRangeWithUrl(
+        setTimeRange(
           formatTimeString(tempFromDate),
           formatTimeString(tempToDate),
         );
@@ -254,7 +252,7 @@ export const TimeRangePicker = () => {
 
   const displayLabel =
     quickRanges.find((r) => r.from === rawFrom && r.to === "now")?.label ||
-    `${from} to ${to}`;
+    `${formatForDisplay(from)} to ${formatForDisplay(to)}`;
 
   const isRelative = isRelativeTime(rawFrom) || isRelativeTime(rawTo);
 

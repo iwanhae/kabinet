@@ -1,4 +1,9 @@
 import { useLocation } from "wouter";
+import {
+  formatTimeRange,
+  refreshRelativeTimeRange,
+  type ParsedTimeRange,
+} from "../utils/timeRange";
 
 export interface UrlParams {
   from?: string;
@@ -8,8 +13,8 @@ export interface UrlParams {
 }
 
 /**
- * URL 파라미터를 중앙화해서 관리하는 훅
- * 기존 파라미터를 유지하면서 새로운 파라미터를 추가/수정
+ * A hook for centralized management of URL parameters
+ * Adds or updates new parameters while retaining existing ones
  */
 export const useUrlParams = () => {
   const [, setLocation] = useLocation();
@@ -28,7 +33,6 @@ export const useUrlParams = () => {
     const currentParams = getCurrentParams();
     const mergedParams = { ...currentParams, ...newParams };
 
-    // undefined 값들은 제거
     const searchParams = new URLSearchParams();
     Object.entries(mergedParams).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== "") {
@@ -100,4 +104,35 @@ export const useQueryParams = () => {
   };
 
   return { setWhereClause, setQuery, getQuery };
+};
+
+export const useTimeRange = () => {
+  const { updateParams } = useUrlParams();
+
+  const getCurrentTimeRange = (): ParsedTimeRange => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const from = searchParams.get("from") || "now-30m";
+    const to = searchParams.get("to") || "now";
+
+    return formatTimeRange(from, to);
+  };
+
+  const setTimeRange = (from: string, to: string) => {
+    updateParams({ from, to }, window.location.pathname);
+  };
+
+  const refreshTimeRange = () => {
+    const current = getCurrentTimeRange();
+    const refreshed = refreshRelativeTimeRange(current.rawFrom, current.rawTo);
+
+    if (refreshed.from !== current.from || refreshed.to !== current.to) {
+      setTimeRange(refreshed.rawFrom, refreshed.rawTo);
+    }
+  };
+
+  return {
+    ...getCurrentTimeRange(),
+    setTimeRange,
+    refreshTimeRange,
+  };
 };
