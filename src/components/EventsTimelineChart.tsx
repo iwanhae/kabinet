@@ -13,8 +13,11 @@ interface EventTimelineData {
   type: string;
   count: number;
 }
+interface Props {
+  where?: string;
+}
 
-const EventsTimelineChart: React.FC = () => {
+const EventsTimelineChart: React.FC<Props> = ({ where = "1=1" }) => {
   const { from, to } = useTimeRangeStore();
   const [, setLocation] = useLocation();
 
@@ -27,13 +30,13 @@ const EventsTimelineChart: React.FC = () => {
         type,
         COUNT(*) AS count
       FROM $events 
-      WHERE type IN ('Normal', 'Warning')
+      WHERE ${where}
       AND metadata.creationTimestamp >= '${from}'
       AND metadata.creationTimestamp <= '${to}'
       GROUP BY time_bucket, type
       ORDER BY time_bucket, type
     `;
-  }, [from, to]);
+  }, [from, to, where]);
 
   const { data, error, isLoading } = useEventsQuery<EventTimelineData>(query);
 
@@ -142,7 +145,8 @@ const EventsTimelineChart: React.FC = () => {
         bucketEnd = bucketStart.add(days, "day");
       }
 
-      const query = `metadata.creationTimestamp >= '${bucketStart.toISOString()}' 
+      const query = `${where} 
+AND metadata.creationTimestamp >= '${bucketStart.toISOString()}' 
 AND metadata.creationTimestamp < '${bucketEnd.toISOString()}'`;
 
       setLocation(`/discover?where=${encodeURIComponent(query)}`);

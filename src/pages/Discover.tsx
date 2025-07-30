@@ -6,6 +6,7 @@ import type { EventResult } from "../types/events";
 import QueryForm from "../components/QueryForm";
 import EventsTable from "../components/EventsTable";
 import EventDetailDrawer from "../components/EventDetailDrawer";
+import EventsTimelineChart from "../components/EventsTimelineChart";
 
 const Discover: React.FC = () => {
   const [, setLocation] = useLocation();
@@ -91,7 +92,10 @@ const Discover: React.FC = () => {
       )}
 
       {data && data.length > 0 && (
-        <EventsTable events={data} onEventClick={handleEventClick} />
+        <>
+          <EventsTimelineChart where={executedQuery || "1=1"} />
+          <EventsTable events={data} onEventClick={handleEventClick} />
+        </>
       )}
 
       <EventDetailDrawer

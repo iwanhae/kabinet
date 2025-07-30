@@ -66,26 +66,6 @@ const EventsTable: React.FC<EventsTableProps> = ({ events, onEventClick }) => {
 
   return (
     <Box>
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 2,
-          mb: 2,
-          p: 2,
-          backgroundColor: alpha("#f5f5f5", 0.7),
-          borderRadius: 1.5,
-          border: `1px solid ${alpha("#e0e0e0", 0.5)}`,
-        }}
-      >
-        <Typography
-          variant="subtitle1"
-          sx={{ fontWeight: 600, color: "text.primary" }}
-        >
-          Found {events.length} events
-        </Typography>
-      </Box>
-
       <TableContainer
         component={Paper}
         elevation={1}
