@@ -1,6 +1,6 @@
 import React from "react";
 import { Grid, CircularProgress, Box } from "@mui/material";
-import { useLocation } from "wouter";
+import { useQueryParams } from "../hooks/useUrlParams";
 import MetricCard from "./MetricCard";
 import { useEventsQuery } from "../hooks/useEventsQuery";
 
@@ -35,7 +35,7 @@ interface StorageEventsResult {
 }
 
 const MetricsOverview: React.FC = () => {
-  const [, setLocation] = useLocation();
+  const { setQuery, setWhereClause } = useQueryParams();
 
   // Query for Total Events
   const totalEventsQuery = `SELECT COUNT(*) as total_count FROM $events`;
@@ -141,9 +141,9 @@ const MetricsOverview: React.FC = () => {
     const query = queries[title];
     if (query) {
       if (title === "Total Events") {
-        setLocation(`/discover?query=${encodeURIComponent(query)}`);
+        setQuery(query);
       } else {
-        setLocation(`/discover?where=${encodeURIComponent(query)}`);
+        setWhereClause(query);
       }
     }
   };

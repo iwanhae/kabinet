@@ -6,7 +6,7 @@ import { useEventsQuery } from "../hooks/useEventsQuery";
 import { useTimeRangeStore } from "../stores/timeRangeStore";
 import { getDynamicInterval } from "../utils/time";
 import dayjs from "dayjs";
-import { useLocation } from "wouter";
+import { useQueryParams } from "../hooks/useUrlParams";
 
 interface EventTimelineData {
   time_bucket: string;
@@ -19,7 +19,8 @@ interface Props {
 
 const EventsTimelineChart: React.FC<Props> = ({ where = "1=1" }) => {
   const { from, to } = useTimeRangeStore();
-  const [, setLocation] = useLocation();
+  const { setWhereClause } = useQueryParams();
+  const { setTimeRange } = useTimeRangeStore();
 
   const query = useMemo(() => {
     const interval = getDynamicInterval(from, to);
@@ -145,11 +146,11 @@ const EventsTimelineChart: React.FC<Props> = ({ where = "1=1" }) => {
         bucketEnd = bucketStart.add(days, "day");
       }
 
-      const query = `${where} 
-AND metadata.creationTimestamp >= '${bucketStart.toISOString()}' 
-AND metadata.creationTimestamp < '${bucketEnd.toISOString()}'`;
-
-      setLocation(`/discover?where=${encodeURIComponent(query)}`);
+      setTimeRange({
+        from: bucketStart.toISOString(),
+        to: bucketEnd.toISOString(),
+      });
+      setWhereClause(where);
     }
   };
 

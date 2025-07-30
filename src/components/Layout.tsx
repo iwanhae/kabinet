@@ -62,7 +62,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   ];
 
   // 현재 경로에 맞는 탭 인덱스 계산
-  const currentTabIndex = menuItems.findIndex(item => item.href === location);
+  const currentTabIndex = menuItems.findIndex((item) => item.href === location);
 
   return (
     <Box>
@@ -91,13 +91,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 }}
               />
             </Box>
-            
+
             {/* 탭 네비게이션 */}
             <StyledTabs
               value={currentTabIndex >= 0 ? currentTabIndex : 0}
               sx={{ ml: 2 }}
             >
-              {menuItems.map((item, index) => (
+              {menuItems.map((item) => (
                 <Tab
                   key={item.text}
                   label={item.text}
@@ -105,7 +105,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   iconPosition="start"
                   component={Link}
                   href={item.href}
-                  sx={{ 
+                  sx={{
                     minWidth: 120,
                     gap: 1,
                   }}
@@ -132,11 +132,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </Box>
         </Toolbar>
       </StyledAppBar>
-      
+
       {/* 메인 콘텐츠 - 이제 전체 너비 사용 */}
-      <MainContent>
-        {children}
-      </MainContent>
+      <MainContent>{children}</MainContent>
     </Box>
   );
 };

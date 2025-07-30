@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Typography, Box, Alert, CircularProgress } from "@mui/material";
-import { useLocation, useSearch } from "wouter";
+import { useSearch } from "wouter";
 import { invalidateEventsQuery, useEventsQuery } from "../hooks/useEventsQuery";
+import { useQueryParams } from "../hooks/useUrlParams";
 import type { EventResult } from "../types/events";
 import QueryForm from "../components/QueryForm";
 import EventsTable from "../components/EventsTable";
@@ -9,7 +10,7 @@ import EventDetailDrawer from "../components/EventDetailDrawer";
 import EventsTimelineChart from "../components/EventsTimelineChart";
 
 const Discover: React.FC = () => {
-  const [, setLocation] = useLocation();
+  const { setWhereClause: updateUrlWhereClause } = useQueryParams();
   const search = useSearch();
   const [whereClause, setWhereClause] = useState("");
   const [executedQuery, setExecutedQuery] = useState<string | null>(null);
@@ -38,10 +39,8 @@ const Discover: React.FC = () => {
     const trimmedWhereClause = whereClause.trim() || "1=1";
     setExecutedQuery(trimmedWhereClause);
 
-    // URL의 where 파라미터 업데이트
-    const searchParams = new URLSearchParams(window.location.search);
-    searchParams.set("where", trimmedWhereClause);
-    setLocation(`/discover?${searchParams.toString()}`);
+    // URL의 where 파라미터 업데이트 (기존 파라미터 유지)
+    updateUrlWhereClause(trimmedWhereClause);
 
     invalidateEventsQuery();
   };

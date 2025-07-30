@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { useLocation } from "wouter";
+import { useTimeRangeParams } from "../hooks/useUrlParams";
 import dayjs, { type ManipulateType } from "dayjs";
 
 export interface TimeRange {
@@ -59,16 +59,11 @@ export const useTimeRangeStore = create<TimeRangeState>((set, get) => ({
 }));
 
 export const useTimeRangeFromUrl = () => {
-  const [, setLocation] = useLocation();
+  const { setTimeRange: setUrlTimeRange } = useTimeRangeParams();
   const { setTimeRange } = useTimeRangeStore();
 
   return (from: string, to: string) => {
     setTimeRange({ from, to });
-    const currentPath = window.location.pathname;
-    setLocation(
-      `${currentPath}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(
-        to,
-      )}`,
-    );
+    setUrlTimeRange(from, to);
   };
 };
