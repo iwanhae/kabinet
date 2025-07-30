@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"time"
@@ -19,13 +21,28 @@ type Server struct {
 }
 
 // New creates a new API server.
-func New(storage *storage.Storage, port string) *Server {
+func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	s := &Server{
 		storage: storage,
 	}
 
 	mux := http.NewServeMux()
+
+	// API Handler
 	mux.HandleFunc("/query", s.handleQuery)
+
+	// Frontend Handler
+	staticFS, err := fs.Sub(distFS, "dist")
+	if err != nil {
+		log.Fatalf("Failed to create static file system: %v", err)
+	}
+	fileServer := http.FileServerFS(staticFS)
+
+	mux.Handle("/", fileServer)
+	// serve index.html for SPA routing
+	mux.Handle("/discover", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "dist/index.html")
+	}))
 
 	s.server = &http.Server{
 		Addr:    ":" + port,

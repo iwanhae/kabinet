@@ -116,6 +116,7 @@ export const useTimeRange = () => {
     const toParam = searchParams.get("to") || "now";
 
     return formatTimeRange(fromParam, toParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, refreshKey]);
 
   const setTimeRange = (from: string, to: string) => {

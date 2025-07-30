@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +15,9 @@ import (
 	"github.com/iwanhae/kube-event-analyzer/internal/collector"
 	"github.com/iwanhae/kube-event-analyzer/internal/storage"
 )
+
+//go:embed all:dist
+var distFS embed.FS
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -43,7 +47,7 @@ func main() {
 	}()
 
 	// --- API Server ---
-	apiServer := api.New(storage, "8080")
+	apiServer := api.New(storage, "8080", distFS)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
