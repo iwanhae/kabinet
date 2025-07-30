@@ -17,8 +17,9 @@ ENV CGO_ENABLED=1
 RUN go build -v -o /go/bin/kea ./main.go
 
 FROM debian:12-slim
-WORKDIR /app
+WORKDIR /
 COPY --from=build /go/bin/kea /app/kea
 
 EXPOSE 8080
+VOLUME [ "/data" ]
 CMD ["/app/kea"]
