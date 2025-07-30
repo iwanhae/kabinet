@@ -1,4 +1,4 @@
-import useSWR, { type SWRResponse } from "swr";
+import useSWR, { mutate, type SWRResponse } from "swr";
 import { useTimeRangeStore } from "../stores/timeRangeStore";
 
 /**
@@ -93,4 +93,8 @@ export const useEventsQuery = <T extends Record<string, any>>(
     // Let's disable it for now to prevent unnecessary API calls.
     revalidateOnFocus: false,
   });
+};
+
+export const invalidateEventsQuery = () => {
+  mutate(() => true, undefined, { revalidate: true });
 };
