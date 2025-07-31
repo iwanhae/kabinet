@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -41,7 +42,15 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	mux.Handle("/", fileServer)
 	// serve index.html for SPA routing
 	mux.Handle("/discover", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "dist/index.html")
+		file, err := staticFS.Open("index.html")
+		if err != nil {
+			http.Error(w, "Could not open index.html", http.StatusInternalServerError)
+			return
+		}
+		defer file.Close()
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.Copy(w, file) // Copy index.html content to response
 	}))
 
 	s.server = &http.Server{
