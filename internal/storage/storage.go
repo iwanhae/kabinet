@@ -49,7 +49,7 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
-	reader, err := sql.Open("duckdb", ":memory:")
+	reader, err := sql.Open("duckdb", ":memory:?preserve_insertion_order=false")
 	if err != nil {
 		writer.Close()
 		return nil, fmt.Errorf("failed to create reader: %w", err)
