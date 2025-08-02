@@ -18,12 +18,13 @@ import (
 )
 
 type Storage struct {
-	writer *sql.DB
-	reader *sql.DB
+	writerMu sync.Mutex
+	writer   *sql.DB
+	reader   *sql.DB
 
-	dataDir   string
-	archiveMu sync.Mutex
-	eventCh   chan *corev1.Event
+	dataDir string
+
+	eventCh chan *corev1.Event
 
 	wg *sync.WaitGroup
 }
@@ -34,7 +35,7 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	writer, err := sql.Open("duckdb", dbPath+"?access_mode=READ_WRITE&threads=2")
+	writer, err := sql.Open("duckdb", dbPath+"?access_mode=READ_WRITE&threads=1")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer: %w", err)
 	}
@@ -48,7 +49,7 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 		writer.Close()
 		return nil, fmt.Errorf("failed to create reader: %w", err)
 	}
-	if _, err := reader.Exec(fmt.Sprintf("ATTACH '%s' AS read_only", dbPath)); err != nil {
+	if _, err := reader.Exec(fmt.Sprintf("ATTACH '%s'", dbPath)); err != nil {
 		reader.Close()
 		writer.Close()
 		return nil, fmt.Errorf("failed to attach database: %w", err)
@@ -109,11 +110,9 @@ func (s *Storage) ManageDataLifecycle(ctx context.Context, interval time.Duratio
 }
 
 func (s *Storage) Archive(ctx context.Context) error {
-	s.archiveMu.Lock()
-	defer s.archiveMu.Unlock()
 
 	var count int
-	if err := s.reader.QueryRowContext(ctx, "SELECT COUNT(*) FROM kube_events").Scan(&count); err != nil {
+	if err := s.writer.QueryRowContext(ctx, "SELECT COUNT(*) FROM kube_events").Scan(&count); err != nil {
 		return fmt.Errorf("failed to count rows in kube_events: %w", err)
 	}
 
@@ -125,68 +124,82 @@ func (s *Storage) Archive(ctx context.Context) error {
 	archiveTableName := fmt.Sprintf("kube_events_archive_%d", time.Now().UnixNano())
 	log.Printf("storage: archiving %d events to table %s", count, archiveTableName)
 
-	tx, err := s.writer.Begin()
+	err := func() error {
+		s.writerMu.Lock()
+		defer s.writerMu.Unlock()
+		tx, err := s.writer.Begin()
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+		defer tx.Rollback() // Rollback on error
+
+		if _, err := tx.ExecContext(ctx, "DROP INDEX IF EXISTS kube_events_resourceVersion_idx"); err != nil {
+			return fmt.Errorf("failed to drop index before archival: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE events.kube_events RENAME TO %s", archiveTableName)); err != nil {
+			return fmt.Errorf("failed to rename table: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx, createTableSQL); err != nil {
+			return fmt.Errorf("failed to create new kube_events table: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit transaction: %w", err)
+		}
+
+		return nil
+	}()
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback() // Rollback on error
-
-	if _, err := tx.ExecContext(ctx, "DROP INDEX IF EXISTS kube_events_resourceVersion_idx"); err != nil {
-		return fmt.Errorf("failed to drop index before archival: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE kube_events RENAME TO %s", archiveTableName)); err != nil {
-		return fmt.Errorf("failed to rename table: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, createTableSQL); err != nil {
-		return fmt.Errorf("failed to create new kube_events table: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("failed to swap tables: %w", err)
 	}
 
 	log.Printf("storage: successfully swapped kube_events table with %s.", archiveTableName)
 
 	var minTime, maxTime time.Time
-	query := fmt.Sprintf("SELECT MIN(metadata.creationTimestamp), MAX(metadata.creationTimestamp) FROM %s", archiveTableName)
-	if err := s.reader.QueryRowContext(ctx, query).Scan(&minTime, &maxTime); err != nil {
+	query := fmt.Sprintf("SELECT MIN(lastTimestamp), MAX(lastTimestamp) FROM %s", archiveTableName)
+	if err := s.writer.QueryRowContext(ctx, query).Scan(&minTime, &maxTime); err != nil {
 		log.Printf("storage: failed to get min/max timestamps for table %s: %v. proceeding with fallback naming", archiveTableName, err)
 	}
 
-	go s.processArchivedTable(archiveTableName, minTime, maxTime)
+	go s.processArchivedTable(ctx, archiveTableName, minTime, maxTime)
 
 	return nil
 }
 
-func (s *Storage) processArchivedTable(tableName string, minTime, maxTime time.Time) {
-	log.Printf("storage: starting background processing for table: %s", tableName)
+func (s *Storage) processArchivedTable(ctx context.Context, tableName string, minTime, maxTime time.Time) {
+	log.Printf("storage: archiving: starting background processing for table: %s", tableName)
 
 	parquetFileName := filepath.Join(s.dataDir, fmt.Sprintf("events_%d_%d.parquet", minTime.Unix(), maxTime.Unix()))
 
-	// Using a new connection for the background task
-	conn, err := s.reader.Conn(context.Background())
+	tx, err := s.writer.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
-		log.Printf("storage: error getting connection for background processing: %v", err)
+		log.Printf("storage: archiving: error getting connection for background processing: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer tx.Rollback()
 
 	copySQL := fmt.Sprintf("COPY %s TO '%s' (FORMAT 'parquet', COMPRESSION 'zstd');", tableName, parquetFileName)
-	if _, err := conn.ExecContext(context.Background(), copySQL); err != nil {
-		log.Printf("storage: error exporting table %s to parquet: %v", tableName, err)
+	if _, err := tx.ExecContext(ctx, copySQL); err != nil {
+		log.Printf("storage: archiving: error exporting table %s to parquet: %v", tableName, err)
 		// Don't drop the table if copy fails, to allow for manual recovery
 		return
 	}
-	log.Printf("storage: successfully exported table %s to %s", tableName, parquetFileName)
+	log.Printf("storage: archiving: successfully exported table %s to %s", tableName, parquetFileName)
 
 	dropSQL := fmt.Sprintf("DROP TABLE %s", tableName)
-	if _, err := conn.ExecContext(context.Background(), dropSQL); err != nil {
-		log.Printf("storage: error dropping archived table %s: %v", tableName, err)
+	if _, err := tx.ExecContext(ctx, dropSQL); err != nil {
+		log.Printf("storage: archiving: error dropping archived table %s: %v", tableName, err)
 		return
 	}
-	log.Printf("storage: successfully dropped archived table %s", tableName)
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("storage: archiving: error committing transaction: %v", err)
+		return
+	}
+
+	log.Printf("storage: archiving: successfully dropped archived table %s", tableName)
 }
 
 func (s *Storage) EnforceRetention(limitBytes int64) error {
@@ -345,7 +358,7 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 	fromClause, err := buildFromClause(relevantFiles, includeKubeEvents)
 	if err != nil {
 		log.Println("storage: query time range resulted in no data sources. returning empty result.")
-		return s.reader.QueryContext(ctx, "SELECT * FROM kube_events WHERE 1=0") // Return empty
+		return s.reader.QueryContext(ctx, "SELECT * FROM events.kube_events WHERE 1=0") // Return empty
 	}
 
 	finalQuery := strings.Replace(query, "$events", fromClause, 1)
@@ -357,7 +370,7 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 func buildFromClause(relevantFiles []string, includeKubeEvents bool) (string, error) {
 	var fromSources []string
 	if includeKubeEvents {
-		fromSources = append(fromSources, "SELECT * FROM read_only.kube_events")
+		fromSources = append(fromSources, "SELECT * FROM events.kube_events")
 	}
 
 	if len(relevantFiles) > 0 {
@@ -428,9 +441,11 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 	}
 
 	// BEGIN TRANSACTION
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
 	tx, err := s.writer.Begin()
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("failed to begin transaction: %w", err) // TODO: retry?
 	}
 	defer tx.Rollback()
 
@@ -497,7 +512,7 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 			k8sEvent.ReportingInstance,
 		}
 		placeholder := "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-		query := fmt.Sprintf("INSERT OR IGNORE INTO kube_events VALUES %s", placeholder)
+		query := fmt.Sprintf("INSERT OR IGNORE INTO events.kube_events VALUES %s", placeholder)
 		_, err := tx.Exec(query, args...)
 		if err != nil {
 			return fmt.Errorf("failed to batch insert events: %w", err)
