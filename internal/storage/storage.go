@@ -21,6 +21,7 @@ type Storage struct {
 	db        *sql.DB
 	dataDir   string
 	archiveMu sync.Mutex
+	eventCh   chan *corev1.Event
 }
 
 func New(ctx context.Context, dbPath string) (*Storage, error) {
@@ -40,10 +41,14 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
-	return &Storage{
+	s := &Storage{
 		db:      db,
 		dataDir: dataDir,
-	}, nil
+		eventCh: make(chan *corev1.Event, 10000),
+	}
+	go s.runBatchInserter(ctx)
+
+	return s, nil
 }
 
 func (s *Storage) Close() {
@@ -343,72 +348,133 @@ func buildFromClause(relevantFiles []string, includeKubeEvents bool) (string, er
 }
 
 func (s *Storage) AppendEvent(k8sEvent *corev1.Event) error {
-	var series any
-	if k8sEvent.Series != nil {
-		series = map[string]any{
-			"count":            k8sEvent.Series.Count,
-			"lastObservedTime": k8sEvent.Series.LastObservedTime.Time,
+	s.eventCh <- k8sEvent
+	return nil
+}
+
+func (s *Storage) runBatchInserter(ctx context.Context) {
+	time.Sleep(time.Duration(5-time.Now().Second()%5) * time.Second) // no special reason for this, just to make logs easier to read
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	batch := make([]*corev1.Event, 0, 1000)
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Context cancelled, flushing remaining events...")
+			if len(batch) > 0 {
+				if err := s.AppendEvents(batch); err != nil {
+					log.Printf("Error appending remaining events: %v", err)
+				}
+			}
+			return
+		case event := <-s.eventCh:
+			batch = append(batch, event)
+			if len(batch) >= 1000 {
+				if err := s.AppendEvents(batch); err != nil {
+					log.Printf("Error appending events: %v", err)
+				}
+				batch = make([]*corev1.Event, 0, 1000)
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				if err := s.AppendEvents(batch); err != nil {
+					log.Printf("Error appending events on tick: %v", err)
+				}
+				batch = make([]*corev1.Event, 0, 1000)
+			}
 		}
-	} else {
-		series = nil
+	}
+}
+
+func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
+	if len(k8sEvents) == 0 {
+		return nil
 	}
 
-	var related any
-	if k8sEvent.Related != nil {
-		related = map[string]any{
-			"kind":            k8sEvent.Related.Kind,
-			"namespace":       k8sEvent.Related.Namespace,
-			"name":            k8sEvent.Related.Name,
-			"uid":             string(k8sEvent.Related.UID),
-			"apiVersion":      k8sEvent.Related.APIVersion,
-			"resourceVersion": k8sEvent.Related.ResourceVersion,
-			"fieldPath":       k8sEvent.Related.FieldPath,
-		}
-	} else {
-		related = nil
-	}
-
-	query := `INSERT OR IGNORE INTO kube_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := s.db.Exec(query,
-		k8sEvent.Kind,
-		k8sEvent.APIVersion,
-		map[string]any{
-			"name":              k8sEvent.ObjectMeta.Name,
-			"namespace":         k8sEvent.ObjectMeta.Namespace,
-			"uid":               string(k8sEvent.ObjectMeta.UID),
-			"resourceVersion":   k8sEvent.ObjectMeta.ResourceVersion,
-			"creationTimestamp": k8sEvent.ObjectMeta.CreationTimestamp.Time,
-		},
-		map[string]any{
-			"kind":            k8sEvent.InvolvedObject.Kind,
-			"namespace":       k8sEvent.InvolvedObject.Namespace,
-			"name":            k8sEvent.InvolvedObject.Name,
-			"uid":             string(k8sEvent.InvolvedObject.UID),
-			"apiVersion":      k8sEvent.InvolvedObject.APIVersion,
-			"resourceVersion": k8sEvent.InvolvedObject.ResourceVersion,
-			"fieldPath":       k8sEvent.InvolvedObject.FieldPath,
-		},
-		k8sEvent.Reason,
-		k8sEvent.Message,
-		map[string]any{
-			"component": k8sEvent.Source.Component,
-			"host":      k8sEvent.Source.Host,
-		},
-		k8sEvent.FirstTimestamp.Time,
-		k8sEvent.LastTimestamp.Time,
-		k8sEvent.Count,
-		k8sEvent.Type,
-		k8sEvent.EventTime.Time,
-		series,
-		k8sEvent.Action,
-		related,
-		k8sEvent.ReportingController,
-		k8sEvent.ReportingInstance,
-	)
-
+	// BEGIN TRANSACTION
+	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("failed to insert event: %w", err)
+		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
+	defer tx.Rollback()
+
+	for _, k8sEvent := range k8sEvents {
+		var series any
+		if k8sEvent.Series != nil {
+			series = map[string]any{
+				"count":            k8sEvent.Series.Count,
+				"lastObservedTime": k8sEvent.Series.LastObservedTime.Time,
+			}
+		} else {
+			series = nil
+		}
+
+		var related any
+		if k8sEvent.Related != nil {
+			related = map[string]any{
+				"kind":            k8sEvent.Related.Kind,
+				"namespace":       k8sEvent.Related.Namespace,
+				"name":            k8sEvent.Related.Name,
+				"uid":             string(k8sEvent.Related.UID),
+				"apiVersion":      k8sEvent.Related.APIVersion,
+				"resourceVersion": k8sEvent.Related.ResourceVersion,
+				"fieldPath":       k8sEvent.Related.FieldPath,
+			}
+		} else {
+			related = nil
+		}
+
+		args := []any{
+			k8sEvent.Kind,
+			k8sEvent.APIVersion,
+			map[string]any{
+				"name":              k8sEvent.ObjectMeta.Name,
+				"namespace":         k8sEvent.ObjectMeta.Namespace,
+				"uid":               string(k8sEvent.ObjectMeta.UID),
+				"resourceVersion":   k8sEvent.ObjectMeta.ResourceVersion,
+				"creationTimestamp": k8sEvent.ObjectMeta.CreationTimestamp.Time,
+			},
+			map[string]any{
+				"kind":            k8sEvent.InvolvedObject.Kind,
+				"namespace":       k8sEvent.InvolvedObject.Namespace,
+				"name":            k8sEvent.InvolvedObject.Name,
+				"uid":             string(k8sEvent.InvolvedObject.UID),
+				"apiVersion":      k8sEvent.InvolvedObject.APIVersion,
+				"resourceVersion": k8sEvent.InvolvedObject.ResourceVersion,
+				"fieldPath":       k8sEvent.InvolvedObject.FieldPath,
+			},
+			k8sEvent.Reason,
+			k8sEvent.Message,
+			map[string]any{
+				"component": k8sEvent.Source.Component,
+				"host":      k8sEvent.Source.Host,
+			},
+			k8sEvent.FirstTimestamp.Time,
+			k8sEvent.LastTimestamp.Time,
+			k8sEvent.Count,
+			k8sEvent.Type,
+			k8sEvent.EventTime.Time,
+			series,
+			k8sEvent.Action,
+			related,
+			k8sEvent.ReportingController,
+			k8sEvent.ReportingInstance,
+		}
+		placeholder := "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+		query := fmt.Sprintf("INSERT OR IGNORE INTO kube_events VALUES %s", placeholder)
+		_, err := tx.Exec(query, args...)
+		if err != nil {
+			return fmt.Errorf("failed to batch insert events: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("Inserted %d events into kube_events", len(k8sEvents))
 
 	return nil
 }

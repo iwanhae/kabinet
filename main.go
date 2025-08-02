@@ -79,10 +79,7 @@ func main() {
 	<-ctx.Done()
 
 	// --- Graceful Shutdown ---
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
-
-	if err := apiServer.Shutdown(shutdownCtx); err != nil {
+	if err := apiServer.Shutdown(context.Background()); err != nil {
 		log.Printf("Error during API server shutdown: %v", err)
 	}
 

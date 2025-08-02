@@ -3,7 +3,6 @@ package collector
 import (
 	"context"
 	"fmt"
-	"log"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -45,7 +44,6 @@ func WatchEvents(ctx context.Context, c *kubernetes.Clientset) <-chan v1.Event {
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			if event, ok := obj.(*v1.Event); ok {
-				log.Printf("Received event: %v", event.Name)
 				select {
 				case eventCh <- *event:
 				case <-ctx.Done():
