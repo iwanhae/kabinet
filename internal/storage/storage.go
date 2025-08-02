@@ -44,12 +44,12 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
-	reader, err := sql.Open("duckdb", ":memory:?threads=2")
+	reader, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		writer.Close()
 		return nil, fmt.Errorf("failed to create reader: %w", err)
 	}
-	if _, err := reader.Exec(fmt.Sprintf("ATTACH '%s'", dbPath)); err != nil {
+	if _, err := reader.Exec(fmt.Sprintf("ATTACH '%s' AS events (READ_ONLY);", dbPath)); err != nil {
 		reader.Close()
 		writer.Close()
 		return nil, fmt.Errorf("failed to attach database: %w", err)
@@ -71,6 +71,21 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 	return s, nil
 }
 
+func (s *Storage) Stats() map[string]any {
+	dataDirSize, err := s.dataDirSize()
+	if err != nil {
+		log.Printf("storage: error getting data directory size: %v", err)
+		dataDirSize = 0
+	}
+	return map[string]any{
+		"writer_stats":  s.writer.Stats(),
+		"reader_stats":  s.reader.Stats(),
+		"event_channel": len(s.eventCh),
+		"data_dir":      s.dataDir,
+		"data_dir_size": dataDirSize,
+	}
+}
+
 func (s *Storage) Wait() {
 	s.wg.Wait()
 	log.Println("storage: all background tasks finished")
@@ -78,16 +93,16 @@ func (s *Storage) Wait() {
 
 func (s *Storage) Close() {
 	log.Println("storage: closing storage...")
-	if err := s.writer.Close(); err != nil {
-		log.Printf("storage: error closing database: %v", err)
-	}
 	if err := s.reader.Close(); err != nil {
-		log.Printf("storage: error closing database: %v", err)
+		log.Printf("storage: error closing reader: %v", err)
+	}
+	if err := s.writer.Close(); err != nil {
+		log.Printf("storage: error closing writer: %v", err)
 	}
 	log.Println("storage: closed successfully")
 }
 
-func (s *Storage) ManageDataLifecycle(ctx context.Context, interval time.Duration, limitBytes int64) {
+func (s *Storage) LifecycleManager(ctx context.Context, interval time.Duration, limitBytes int64) {
 	log.Printf("storage: starting data lifecycle manager with interval %v and size limit %d bytes", interval, limitBytes)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -202,6 +217,25 @@ func (s *Storage) processArchivedTable(ctx context.Context, tableName string, mi
 	log.Printf("storage: archiving: successfully dropped archived table %s", tableName)
 }
 
+func (s *Storage) dataDirSize() (int64, error) {
+	files, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read data directory: %w", err)
+	}
+
+	var totalSize int64
+	for _, file := range files {
+		info, err := file.Info()
+		if err != nil {
+			log.Printf("storage: could not get file info for %s: %v", file.Name(), err)
+			continue
+		}
+		totalSize += info.Size()
+	}
+
+	return totalSize, nil
+}
+
 func (s *Storage) EnforceRetention(limitBytes int64) error {
 	files, err := os.ReadDir(s.dataDir)
 	if err != nil {
@@ -226,14 +260,9 @@ func (s *Storage) EnforceRetention(limitBytes int64) error {
 		return tsI < tsJ
 	})
 
-	var totalSize int64
-	for _, file := range parquetFiles {
-		info, err := file.Info()
-		if err != nil {
-			log.Printf("storage: could not get file info for %s: %v", file.Name(), err)
-			continue
-		}
-		totalSize += info.Size()
+	totalSize, err := s.dataDirSize()
+	if err != nil {
+		return fmt.Errorf("failed to get data directory size: %w", err)
 	}
 
 	log.Printf("storage: current parquet files size: %d bytes. Limit: %d bytes.", totalSize, limitBytes)
@@ -311,18 +340,27 @@ func parseParquetFilename(filename string) (int64, int64, bool) {
 	return 0, 0, false
 }
 
+type ParquetFileInfo struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+type RangeQueryResult struct {
+	Duration time.Duration
+	Files    []ParquetFileInfo
+}
+
 // RangeQuery executes a range query against the storage.
 // It executes the query by substituting the $events placeholder with the appropriate FROM clause.
-func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.Time) (*sql.Rows, error) {
+func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.Time) (*sql.Rows, *RangeQueryResult, error) {
 	files, err := os.ReadDir(s.dataDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read data directory: %w", err)
+		return nil, nil, fmt.Errorf("failed to read data directory: %w", err) // TODO: retry?
 	}
-
 	queryStartTs := start.Unix()
 	queryEndTs := end.Unix()
 
-	var relevantFiles []string
+	var relevantFiles []ParquetFileInfo
 	var latestParquetMaxTs int64
 
 	for _, file := range files {
@@ -330,10 +368,19 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 			continue
 		}
 
+		info, err := file.Info()
+		if err != nil {
+			log.Printf("storage: could not get file info for %s: %v", file.Name(), err)
+			continue
+		}
+
 		minTs, maxTs, ok := parseParquetFilename(file.Name())
 		if !ok {
 			log.Printf("storage: could not parse filename %s, including it just in case.", file.Name())
-			relevantFiles = append(relevantFiles, filepath.Join(s.dataDir, file.Name()))
+			relevantFiles = append(relevantFiles, ParquetFileInfo{
+				Path: filepath.Join(s.dataDir, file.Name()),
+				Size: info.Size(),
+			})
 			continue
 		}
 
@@ -344,7 +391,10 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 		// File range overlaps with query range if:
 		// (file_start <= query_end) AND (file_end >= query_start)
 		if maxTs >= queryStartTs && minTs <= queryEndTs {
-			relevantFiles = append(relevantFiles, filepath.Join(s.dataDir, file.Name()))
+			relevantFiles = append(relevantFiles, ParquetFileInfo{
+				Path: filepath.Join(s.dataDir, file.Name()),
+				Size: info.Size(),
+			})
 		}
 	}
 
@@ -355,16 +405,29 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 		includeKubeEvents = false
 	}
 
-	fromClause, err := buildFromClause(relevantFiles, includeKubeEvents)
+	relevantFilePaths := make([]string, len(relevantFiles))
+	for i, f := range relevantFiles {
+		relevantFilePaths[i] = f.Path
+	}
+
+	fromClause, err := buildFromClause(relevantFilePaths, includeKubeEvents)
 	if err != nil {
 		log.Println("storage: query time range resulted in no data sources. returning empty result.")
-		return s.reader.QueryContext(ctx, "SELECT * FROM events.kube_events WHERE 1=0") // Return empty
+		return nil, nil, fmt.Errorf("query time range resulted in no data sources")
 	}
 
 	finalQuery := strings.Replace(query, "$events", fromClause, 1)
 	log.Printf("storage: executing range query: %s", finalQuery)
 
-	return s.reader.QueryContext(ctx, finalQuery)
+	now := time.Now()
+	rows, err := s.reader.QueryContext(ctx, finalQuery)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rows, &RangeQueryResult{
+		Duration: time.Since(now),
+		Files:    relevantFiles,
+	}, nil
 }
 
 func buildFromClause(relevantFiles []string, includeKubeEvents bool) (string, error) {

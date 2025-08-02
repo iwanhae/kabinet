@@ -19,18 +19,22 @@ import (
 type Server struct {
 	storage *storage.Storage
 	server  *http.Server
+
+	limitCh chan struct{}
 }
 
 // New creates a new API server.
 func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	s := &Server{
 		storage: storage,
+		limitCh: make(chan struct{}, 2),
 	}
 
 	mux := http.NewServeMux()
 
 	// API Handler
 	mux.HandleFunc("/query", s.handleQuery)
+	mux.HandleFunc("/stats", s.handleStats)
 
 	// Frontend Handler
 	staticFS, err := fs.Sub(distFS, "dist")
@@ -60,6 +64,12 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	return s
 }
 
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(s.storage.Stats())
+}
+
 // Start runs the API server.
 func (s *Server) Start() error {
 	log.Printf("server: listening on %s", s.server.Addr)
@@ -79,7 +89,10 @@ type queryRequest struct {
 }
 
 type queryResponse struct {
-	Results []map[string]any `json:"results"`
+	Results        []map[string]any          `json:"results"`
+	DurationMs     int64                     `json:"duration_ms"`
+	Files          []storage.ParquetFileInfo `json:"files"`
+	TotalFilesSize int64                     `json:"total_files_size_bytes"`
 }
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +112,12 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.storage.RangeQuery(r.Context(), req.Query, req.Start, req.End)
+	s.limitCh <- struct{}{}
+	defer func() {
+		<-s.limitCh
+	}()
+
+	rows, result, err := s.storage.RangeQuery(r.Context(), req.Query, req.Start, req.End)
 	if err != nil {
 		log.Printf("server: failed to execute query: %v", err)
 		http.Error(w, fmt.Sprintf("server: failed to execute query: %v", err), http.StatusInternalServerError)
@@ -113,9 +131,17 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var totalSize int64
+	for _, f := range result.Files {
+		totalSize += f.Size
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(queryResponse{
-		Results: results,
+		Results:        results,
+		DurationMs:     result.Duration.Milliseconds(),
+		Files:          result.Files,
+		TotalFilesSize: totalSize,
 	}); err != nil {
 		log.Printf("server: failed to write response: %v", err)
 	}
