@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -34,6 +35,10 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
+
+	// Remove the WAL file
+	// This is duckdb's bug that failed to recover from a crash.
+	os.Remove(path.Join(dataDir, "events.db.wal"))
 
 	writer, err := sql.Open("duckdb", dbPath+"?access_mode=READ_WRITE&threads=1")
 	if err != nil {
