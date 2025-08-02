@@ -105,6 +105,18 @@ func runCollector(ctx context.Context, storage *storage.Storage) {
 				log.Println("Event watcher channel closed. Collector is stopping.")
 				return
 			}
+
+			// if the event is missing some fields, set them to the creation timestamp
+			if event.FirstTimestamp.IsZero() {
+				event.FirstTimestamp = event.ObjectMeta.CreationTimestamp
+			}
+			if event.LastTimestamp.IsZero() {
+				event.LastTimestamp = event.FirstTimestamp
+			}
+			if event.Count == 0 {
+				event.Count = 1
+			}
+
 			if err := storage.AppendEvent(&event); err != nil {
 				log.Printf("Failed to append event: %v", err)
 			}
