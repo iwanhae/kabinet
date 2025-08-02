@@ -17,14 +17,16 @@ import (
 
 // Server holds the dependencies for the API server.
 type Server struct {
-	storage *storage.Storage
-	server  *http.Server
+	reader *storage.Reader
+	writer *storage.Writer
+	server *http.Server
 }
 
 // New creates a new API server.
-func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
+func New(reader *storage.Reader, writer *storage.Writer, port string, distFS embed.FS) *Server {
 	s := &Server{
-		storage: storage,
+		reader: reader,
+		writer: writer,
 	}
 
 	mux := http.NewServeMux()
@@ -64,7 +66,7 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(s.storage.Stats())
+	json.NewEncoder(w).Encode(s.writer.Stats())
 }
 
 // Start runs the API server.
@@ -109,7 +111,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, result, err := s.storage.RangeQuery(r.Context(), req.Query, req.Start, req.End)
+	rows, result, err := s.reader.RangeQuery(r.Context(), req.Query, req.Start, req.End)
 	if err != nil {
 		log.Printf("server: failed to execute query: %v", err)
 		http.Error(w, fmt.Sprintf("server: failed to execute query: %v", err), http.StatusInternalServerError)

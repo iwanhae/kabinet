@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/iwanhae/kube-event-analyzer/internal/api"
 	"github.com/iwanhae/kube-event-analyzer/internal/collector"
@@ -34,22 +35,22 @@ func main() {
 		cancel()
 	}()
 
-	// --- Storage ---
-	storage, err := storage.New(ctx, "data/events.db")
+	// --- Storage Writer ---
+	writer, err := storage.NewWriter("data/events.db")
 	if err != nil {
-		log.Fatalf("main: failed to initialize storage: %v", err)
+		log.Fatalf("main: failed to initialize storage writer: %v", err)
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		<-ctx.Done()
-		log.Println("main: shutting down storage...")
-		storage.Wait()
-		log.Println("main: storage closed")
-	}()
+	defer writer.Close()
+
+	// --- Storage Reader ---
+	reader, err := storage.NewReader("data/events.db")
+	if err != nil {
+		log.Fatalf("main: failed to initialize storage reader: %v", err)
+	}
+	defer reader.Close()
 
 	// --- API Server ---
-	apiServer := api.New(storage, cfg.ListenPort, distFS)
+	apiServer := api.New(reader, writer, cfg.ListenPort, distFS)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -65,7 +66,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		log.Println("main: starting data lifecycle manager...")
-		storage.LifecycleManager(ctx, cfg.ArchiveInterval, cfg.StorageLimitBytes)
+		writer.LifecycleManager(ctx, cfg.ArchiveInterval, cfg.StorageLimitBytes)
 		log.Println("main: data lifecycle manager finished")
 	}()
 
@@ -73,7 +74,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		log.Println("main: starting event collector...")
-		runCollector(ctx, storage)
+		runCollector(ctx, writer)
 		log.Println("main: collector finished")
 	}()
 
@@ -81,7 +82,10 @@ func main() {
 	<-ctx.Done()
 
 	// --- Graceful Shutdown ---
-	if err := apiServer.Shutdown(context.Background()); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	if err := apiServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("main: error during API server shutdown: %v", err)
 	}
 
@@ -90,7 +94,7 @@ func main() {
 	log.Println("main: all processes finished. exiting.")
 }
 
-func runCollector(ctx context.Context, storage *storage.Storage) {
+func runCollector(ctx context.Context, writer *storage.Writer) {
 	c, err := collector.ConnectK8s()
 	if err != nil {
 		log.Printf("collector: error connecting to Kubernetes: %v. collector will not run.", err)
@@ -119,7 +123,7 @@ func runCollector(ctx context.Context, storage *storage.Storage) {
 				event.Count = 1
 			}
 
-			if err := storage.AppendEvent(ctx, &event); err != nil {
+			if err := writer.AppendEvent(&event); err != nil {
 				log.Printf("collector: failed to append event: %v", err)
 			}
 		case <-ctx.Done():
