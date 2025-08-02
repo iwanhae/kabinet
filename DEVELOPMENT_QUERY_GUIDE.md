@@ -2,6 +2,8 @@
 
 This guide provides instructions and examples on how to query the Kube Event Analyzer API.
 
+**Current Status**: The API is fully implemented and production-ready, supporting complex SQL queries with DuckDB, real-time and historical data access, and comprehensive response metadata.
+
 ## API Endpoint
 
 - **URL**: `http://localhost:8080/query`
@@ -25,9 +27,13 @@ The API expects a JSON payload with the following fields:
 
 ## API Response
 
-The API returns a JSON object containing a `results` field.
+The API returns a JSON object with detailed information about the query execution.
 
-- `results`: An array of JSON objects, where each object represents a row in the query result. The keys of the objects correspond to the column names in your `SELECT` statement.
+**Successful Response Structure:**
+- `results`: An array of JSON objects, where each object represents a row in the query result. The keys correspond to the column names in your `SELECT` statement.
+- `duration_ms`: Query execution time in milliseconds
+- `files`: Array of parquet file information that were accessed during the query
+- `total_files_size_bytes`: Total size of all accessed files in bytes
 
 **Example Response:**
 
@@ -44,16 +50,28 @@ For a query like `SELECT reason, COUNT(*) as count FROM $events ...`, the respon
       "reason": "Unhealthy",
       "count": 21502
     }
-  ]
+  ],
+  "duration_ms": 45,
+  "files": [
+    {
+      "name": "events_2025-01-01_12-00-00.parquet",
+      "size": 2097152,
+      "created": "2025-01-01T12:00:00Z"
+    }
+  ],
+  "total_files_size_bytes": 2097152
 }
 ```
 
-In case of a query error, the response will contain an error message instead:
+**Error Response:**
 
-```json
-{
-  "error": "Binder Error: Referenced column \"kube-system\" not found..."
-}
+In case of a query error, the API returns an HTTP error status with a plain text error message:
+
+```
+HTTP/1.1 500 Internal Server Error
+Content-Type: text/plain
+
+server: failed to execute query: Binder Error: Referenced column "kube-system" not found...
 ```
 
 ## The `$events` Macro
@@ -178,6 +196,35 @@ WHERE type = 'Warning'
 GROUP BY bucket, reason
 ORDER BY bucket, count DESC
 ```
+
+## Additional API Endpoints
+
+### Stats Endpoint: `GET /stats`
+
+Returns system statistics and storage information.
+
+**Example Request:**
+```bash
+curl http://localhost:8080/stats
+```
+
+**Response:**
+```json
+{
+  "in_memory_events": 15234,
+  "parquet_files": 45,
+  "total_storage_size_bytes": 8589934592,
+  "oldest_event": "2025-01-01T00:00:00Z",
+  "newest_event": "2025-01-07T23:59:59Z"
+}
+```
+
+### Web Interface Routes
+
+- `GET /` - Analytics Dashboard (main insights page)
+- `GET /discover` - Query builder and event exploration interface
+
+These routes serve the React frontend application for interactive data exploration.
 
 ## Common Query Examples
 

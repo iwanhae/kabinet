@@ -2,13 +2,16 @@
 
 Welcome to the Kube Event Analyzer frontend! This guide provides the necessary information to get you started with development.
 
+**Current Status**: The frontend is fully implemented and production-ready, featuring a comprehensive analytics dashboard, advanced query builder, and real-time data visualization capabilities.
+
 ## Tech Stack
 
 - **Framework**: [React](https://reactjs.org/) with [Vite](https://vitejs.dev/)
 - **Language**: [TypeScript](https://www.typescriptlang.org/)
 - **UI Library**: [Material-UI (MUI)](https://mui.com/)
 - **Data Fetching**: [SWR](https://swr.vercel.app/)
-- **State Management**: [Zustand](https://github.com/pmndrs/zustand)
+- **State Management**: React Context API + URL parameters
+- **Charts**: [ApexCharts](https://apexcharts.com/) with [react-apexcharts](https://github.com/apexcharts/react-apexcharts)
 - **Date & Time**: [Day.js](https://day.js.org/) with `@mui/x-date-pickers`
 - **Routing**: [Wouter](https://github.com/molefrog/wouter)
 - **Styling**: [MUI's `styled` API](https://mui.com/system/styled/) & [Emotion](https://emotion.sh/)
@@ -40,10 +43,11 @@ The `src` directory is organized as follows:
 src/
 ├── assets/         # Static assets like images and SVGs
 ├── components/     # Reusable React components
-├── contexts/       # React contexts for global state
-├── hooks/          # Custom React hooks (e.g., for data fetching)
+├── contexts/       # React contexts for global state (theme, refresh)
+├── hooks/          # Custom React hooks (data fetching, URL params, navigation)
 ├── pages/          # Page components corresponding to routes
-├── stores/         # Zustand stores for global state management
+├── types/          # TypeScript type definitions
+├── utils/          # Utility functions (time parsing, date handling)
 ├── App.tsx         # Main application component, handles routing and global setup
 ├── main.tsx        # Application entry point
 ├── index.css       # Global styles
@@ -113,11 +117,16 @@ const TopReasonsChart = () => {
 
 A critical piece of global state is the **time range**, which is automatically used by the `useEventsQuery` hook.
 
-**Location**: `src/stores/timeRangeStore.ts`
+**Location**: `src/hooks/useUrlParams.ts` and `src/contexts/RefreshContext.tsx`
 
-**Core Idea**: The time range is managed in a Zustand store and synchronized with the URL's query parameters. The store holds both the raw string values (e.g., `now-1h`) and the parsed ISO 8601 timestamps. Any component using `useEventsQuery` will automatically re-fetch data when the time range changes.
+**Core Idea**: The time range is managed through URL query parameters and React Context, providing a clean separation of concerns. The system holds both the raw string values (e.g., `now-1h`) and the parsed ISO 8601 timestamps. Any component using `useEventsQuery` will automatically re-fetch data when the time range changes.
 
-**How to Update**: The time range should be updated via the `TimeRangePicker` component. It provides a UI for selecting quick ranges or absolute time frames.
+**Key Hooks:**
+- `useTimeRange()`: Gets current time range values and provides `setTimeRange()` function
+- `useUrlParams()`: Lower-level hook for managing all URL parameters
+- `useRefresh()`: Context hook for manual refresh functionality
+
+**How to Update**: The time range should be updated via the `TimeRangePicker` component, which provides a UI for selecting quick ranges or absolute time frames. Components can also programmatically update the time range using the `setTimeRange()` function.
 
 **Manual Refresh**: When a relative time range (e.g., "Last 30 minutes") is active, a **Refresh button** appears next to the picker. This allows the user to manually update the time range to the current time, triggering a data refresh across the application. The automatic refresh logic has been removed in favor of this manual control to improve performance and predictability.
 
@@ -136,11 +145,37 @@ We use **Wouter** for client-side routing due to its minimal footprint and hook-
 - **Route Definitions**: All routes are defined in `src/App.tsx`.
 - **Navigation**: Use the `<Link>` component for links and the `useLocation` hook for programmatic navigation.
 
-### 5. Creating New Components & Pages
+### 5. Available Components
+
+The project includes a comprehensive set of pre-built components:
+
+**Core Components:**
+- `Layout.tsx` - Main application layout with navigation and theme toggle
+- `TimeRangePicker.tsx` - Advanced time range selection with quick presets and custom ranges
+- `QueryForm.tsx` - SQL query input form with execution controls
+
+**Data Visualization:**
+- `EventsTimelineChart.tsx` - Interactive timeline chart using ApexCharts
+- `MetricsOverview.tsx` - Key metrics dashboard with cards
+- `MetricCard.tsx` - Individual metric display component
+- `EventsTable.tsx` - Sortable, searchable events table
+- `EventDetailDrawer.tsx` - Detailed event information in a sliding drawer
+
+**Analytics Components:**
+- `TopNoisyNamespaces.tsx` - Chart showing most active namespaces
+- `TopWarningReasons.tsx` - Breakdown of warning event reasons
+- `RecentCriticalEvents.tsx` - List of recent critical events
+
+**Utility Components:**
+- `ChartPlaceholder.tsx` - Loading placeholder for charts
+- `Link.tsx` - Custom link component with Wouter integration
+
+### 6. Creating New Components & Pages
 
 - **Reusable Components**: Create inside `src/components/`.
 - **Page Components**: Create inside `src/pages/` and add the corresponding route to `App.tsx`.
 - **Component Logic**: Keep components focused. Separate complex logic into custom hooks (like `useEventsQuery`).
+- **Data Fetching**: Always use `useEventsQuery` for API calls - it handles caching, loading states, and time range integration automatically.
 
 ---
 
