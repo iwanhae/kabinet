@@ -30,9 +30,7 @@ const TopWarningReasons: React.FC<TopWarningReasonsProps> = ({ data }) => {
     FROM $events 
     WHERE type = 'Warning' 
     GROUP BY reason 
-    ORDER BY count DESC 
-    LIMIT 15
-  `;
+    ORDER BY count DESC;`;
 
   const {
     data: queryData,
@@ -92,7 +90,7 @@ const TopWarningReasons: React.FC<TopWarningReasonsProps> = ({ data }) => {
           Most frequent warning event types
         </Typography>
 
-        <List dense sx={{ p: 0 }}>
+        <List dense sx={{ p: 0, maxHeight: 500, overflowY: "auto" }}>
           {reasons.map((item, index) => {
             const query = `reason='${item.reason}' AND type='Warning'`;
             const href = `/discover?where=${encodeURIComponent(query)}`;

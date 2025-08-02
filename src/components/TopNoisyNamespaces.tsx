@@ -30,9 +30,7 @@ const TopNoisyNamespaces: React.FC<TopNoisyNamespacesProps> = ({ data }) => {
     FROM $events 
     WHERE type = 'Warning' AND metadata.namespace IS NOT NULL 
     GROUP BY metadata.namespace 
-    ORDER BY count DESC 
-    LIMIT 15
-  `;
+    ORDER BY count DESC;`;
 
   const {
     data: queryData,
@@ -90,7 +88,7 @@ const TopNoisyNamespaces: React.FC<TopNoisyNamespacesProps> = ({ data }) => {
           Namespaces with most warning events
         </Typography>
 
-        <List dense sx={{ p: 0 }}>
+        <List dense sx={{ p: 0, maxHeight: 500, overflowY: "auto" }}>
           {namespaces.map((item, index) => {
             const query = `metadata.namespace='${item.namespace}' AND type='Warning'`;
             const href = `/discover?where=${encodeURIComponent(query)}`;

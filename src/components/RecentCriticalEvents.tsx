@@ -43,7 +43,7 @@ const RecentCriticalEvents: React.FC<RecentCriticalEventsProps> = ({
     FROM $events 
     WHERE type = 'Warning' 
     ORDER BY lastTimestamp DESC 
-    LIMIT 5
+    LIMIT 20
   `;
 
   const {
@@ -103,7 +103,7 @@ const RecentCriticalEvents: React.FC<RecentCriticalEventsProps> = ({
           Latest warning events across the cluster
         </Typography>
 
-        <List dense sx={{ p: 0 }}>
+        <List dense sx={{ p: 0, maxHeight: 500, overflowY: "auto" }}>
           {events.map((event) => {
             const query = `reason='${event.reason}' AND metadata.namespace='${event.namespace}'`;
             const href = `/discover?where=${encodeURIComponent(query)}`;
