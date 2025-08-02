@@ -35,7 +35,7 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	// Frontend Handler
 	staticFS, err := fs.Sub(distFS, "dist")
 	if err != nil {
-		log.Fatalf("Failed to create static file system: %v", err)
+		log.Fatalf("server: failed to create static file system: %v", err)
 	}
 	fileServer := http.FileServerFS(staticFS)
 
@@ -44,7 +44,7 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	mux.Handle("/discover", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		file, err := staticFS.Open("index.html")
 		if err != nil {
-			http.Error(w, "Could not open index.html", http.StatusInternalServerError)
+			http.Error(w, "server: could not open index.html", http.StatusInternalServerError)
 			return
 		}
 		defer file.Close()
@@ -62,13 +62,13 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 
 // Start runs the API server.
 func (s *Server) Start() error {
-	log.Printf("API server listening on %s", s.server.Addr)
+	log.Printf("server: listening on %s", s.server.Addr)
 	return s.server.ListenAndServe()
 }
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
-	log.Println("Shutting down API server...")
+	log.Println("server: shutting down API server...")
 	return s.server.Shutdown(ctx)
 }
 
@@ -84,31 +84,31 @@ type queryResponse struct {
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "server: only POST method is allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	var req queryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("server: invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
 
 	if req.Query == "" || req.Start.IsZero() || req.End.IsZero() {
-		http.Error(w, "Missing required fields: query, start, end", http.StatusBadRequest)
+		http.Error(w, "server: missing required fields: query, start, end", http.StatusBadRequest)
 		return
 	}
 
 	rows, err := s.storage.RangeQuery(r.Context(), req.Query, req.Start, req.End)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to execute query: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("server: failed to execute query: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
 	results, err := serializeRows(rows)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to serialize results: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("server: failed to serialize results: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(queryResponse{
 		Results: results,
 	}); err != nil {
-		log.Printf("Failed to write response: %v", err)
+		log.Printf("server: failed to write response: %v", err)
 	}
 }
 

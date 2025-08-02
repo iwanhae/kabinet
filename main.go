@@ -28,22 +28,22 @@ func main() {
 	signal.Notify(stopCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-stopCh
-		log.Println("Received shutdown signal, initiating graceful shutdown...")
+		log.Println("main: received shutdown signal, initiating graceful shutdown...")
 		cancel()
 	}()
 
 	// --- Storage ---
 	storage, err := storage.New(ctx, "data/events.db")
 	if err != nil {
-		log.Fatalf("Failed to initialize storage: %v", err)
+		log.Fatalf("main: failed to initialize storage: %v", err)
 	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		<-ctx.Done()
-		log.Println("Shutting down storage...")
-		storage.Close()
-		log.Println("Storage closed")
+		log.Println("main: shutting down storage...")
+		storage.Wait()
+		log.Println("main: storage closed")
 	}()
 
 	// --- API Server ---
@@ -51,28 +51,28 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		log.Println("Starting API server...")
+		log.Println("main: starting API server...")
 		if err := apiServer.Start(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("API server failed: %v", err)
+			log.Fatalf("main: API server failed: %v", err)
 		}
-		log.Println("API server closed")
+		log.Println("main: API server closed")
 	}()
 
 	// --- Collector and Data Lifecycle ---
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		log.Println("Starting data lifecycle manager...")
+		log.Println("main: starting data lifecycle manager...")
 		storage.ManageDataLifecycle(ctx, 3*time.Hour, 10*1024*1024*1024) // 3 hour interval, 10GB limit
-		log.Println("Data lifecycle manager finished")
+		log.Println("main: data lifecycle manager finished")
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		log.Println("Starting event collector...")
+		log.Println("main: starting event collector...")
 		runCollector(ctx, storage)
-		log.Println("Collector finished")
+		log.Println("main: collector finished")
 	}()
 
 	// Wait for shutdown signal
@@ -80,29 +80,29 @@ func main() {
 
 	// --- Graceful Shutdown ---
 	if err := apiServer.Shutdown(context.Background()); err != nil {
-		log.Printf("Error during API server shutdown: %v", err)
+		log.Printf("main: error during API server shutdown: %v", err)
 	}
 
-	log.Println("Waiting for all background processes to finish...")
+	log.Println("main: waiting for all background processes to finish...")
 	wg.Wait()
-	log.Println("All processes finished. Exiting.")
+	log.Println("main: all processes finished. exiting.")
 }
 
 func runCollector(ctx context.Context, storage *storage.Storage) {
 	c, err := collector.ConnectK8s()
 	if err != nil {
-		log.Printf("Error connecting to Kubernetes: %v. Collector will not run.", err)
+		log.Printf("collector: error connecting to Kubernetes: %v. collector will not run.", err)
 		return
 	}
 
 	watcher := collector.WatchEvents(ctx, c)
 
-	log.Println("Event collector started.")
+	log.Println("collector: event collector started.")
 	for {
 		select {
 		case event, ok := <-watcher:
 			if !ok {
-				log.Println("Event watcher channel closed. Collector is stopping.")
+				log.Println("collector: event watcher channel closed. collector is stopping.")
 				return
 			}
 
@@ -117,11 +117,11 @@ func runCollector(ctx context.Context, storage *storage.Storage) {
 				event.Count = 1
 			}
 
-			if err := storage.AppendEvent(&event); err != nil {
-				log.Printf("Failed to append event: %v", err)
+			if err := storage.AppendEvent(ctx, &event); err != nil {
+				log.Printf("collector: failed to append event: %v", err)
 			}
 		case <-ctx.Done():
-			log.Println("Context cancelled. Stopping event collector.")
+			log.Println("collector: context cancelled. stopping event collector.")
 			return
 		}
 	}

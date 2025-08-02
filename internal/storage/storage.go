@@ -19,9 +19,13 @@ import (
 
 type Storage struct {
 	db        *sql.DB
+	connector *duckdb.Connector
+
 	dataDir   string
 	archiveMu sync.Mutex
 	eventCh   chan *corev1.Event
+
+	wg *sync.WaitGroup
 }
 
 func New(ctx context.Context, dbPath string) (*Storage, error) {
@@ -42,38 +46,54 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 	}
 
 	s := &Storage{
-		db:      db,
-		dataDir: dataDir,
-		eventCh: make(chan *corev1.Event, 10000),
+		db:        db,
+		connector: connector,
+		dataDir:   dataDir,
+		eventCh:   make(chan *corev1.Event, 10000),
+		wg:        &sync.WaitGroup{},
 	}
-	go s.runBatchInserter(ctx)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runBatchInserter(ctx)
+	}()
 
 	return s, nil
 }
 
+func (s *Storage) Wait() {
+	s.wg.Wait()
+	log.Println("storage: all background tasks finished")
+}
+
 func (s *Storage) Close() {
+	log.Println("storage: closing storage...")
 	if err := s.db.Close(); err != nil {
-		log.Printf("Error closing database: %v", err)
+		log.Printf("storage: error closing database: %v", err)
 	}
+	if err := s.connector.Close(); err != nil {
+		log.Printf("storage: error closing connector: %v", err)
+	}
+	log.Println("storage: closed successfully")
 }
 
 func (s *Storage) ManageDataLifecycle(ctx context.Context, interval time.Duration, limitBytes int64) {
-	log.Printf("Starting data lifecycle manager with interval %v and size limit %d bytes", interval, limitBytes)
+	log.Printf("storage: starting data lifecycle manager with interval %v and size limit %d bytes", interval, limitBytes)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			log.Println("Running scheduled data lifecycle management...")
+			log.Println("storage: running scheduled data lifecycle management...")
 			if err := s.Archive(ctx); err != nil {
-				log.Printf("Error during data archival: %v", err)
+				log.Printf("storage: error during data archival: %v", err)
 			}
 			if err := s.EnforceRetention(limitBytes); err != nil {
-				log.Printf("Error during retention enforcement: %v", err)
+				log.Printf("storage: error during retention enforcement: %v", err)
 			}
 		case <-ctx.Done():
-			log.Println("Stopping data lifecycle manager.")
+			log.Println("storage: stopping data lifecycle manager.")
 			return
 		}
 	}
@@ -89,12 +109,12 @@ func (s *Storage) Archive(ctx context.Context) error {
 	}
 
 	if count == 0 {
-		log.Println("No new events to archive.")
+		log.Println("storage: no new events to archive.")
 		return nil
 	}
 
 	archiveTableName := fmt.Sprintf("kube_events_archive_%d", time.Now().UnixNano())
-	log.Printf("Archiving %d events to table %s", count, archiveTableName)
+	log.Printf("storage: archiving %d events to table %s", count, archiveTableName)
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -118,12 +138,12 @@ func (s *Storage) Archive(ctx context.Context) error {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("Successfully swapped kube_events table with %s.", archiveTableName)
+	log.Printf("storage: successfully swapped kube_events table with %s.", archiveTableName)
 
 	var minTime, maxTime time.Time
 	query := fmt.Sprintf("SELECT MIN(metadata.creationTimestamp), MAX(metadata.creationTimestamp) FROM %s", archiveTableName)
 	if err := s.db.QueryRowContext(ctx, query).Scan(&minTime, &maxTime); err != nil {
-		log.Printf("failed to get min/max timestamps for table %s: %v. proceeding with fallback naming", archiveTableName, err)
+		log.Printf("storage: failed to get min/max timestamps for table %s: %v. proceeding with fallback naming", archiveTableName, err)
 	}
 
 	go s.processArchivedTable(archiveTableName, minTime, maxTime)
@@ -132,32 +152,32 @@ func (s *Storage) Archive(ctx context.Context) error {
 }
 
 func (s *Storage) processArchivedTable(tableName string, minTime, maxTime time.Time) {
-	log.Printf("Starting background processing for table: %s", tableName)
+	log.Printf("storage: starting background processing for table: %s", tableName)
 
 	parquetFileName := filepath.Join(s.dataDir, fmt.Sprintf("events_%d_%d.parquet", minTime.Unix(), maxTime.Unix()))
 
 	// Using a new connection for the background task
 	conn, err := s.db.Conn(context.Background())
 	if err != nil {
-		log.Printf("Error getting connection for background processing: %v", err)
+		log.Printf("storage: error getting connection for background processing: %v", err)
 		return
 	}
 	defer conn.Close()
 
 	copySQL := fmt.Sprintf("COPY %s TO '%s' (FORMAT 'parquet', COMPRESSION 'zstd');", tableName, parquetFileName)
 	if _, err := conn.ExecContext(context.Background(), copySQL); err != nil {
-		log.Printf("Error exporting table %s to parquet: %v", tableName, err)
+		log.Printf("storage: error exporting table %s to parquet: %v", tableName, err)
 		// Don't drop the table if copy fails, to allow for manual recovery
 		return
 	}
-	log.Printf("Successfully exported table %s to %s", tableName, parquetFileName)
+	log.Printf("storage: successfully exported table %s to %s", tableName, parquetFileName)
 
 	dropSQL := fmt.Sprintf("DROP TABLE %s", tableName)
 	if _, err := conn.ExecContext(context.Background(), dropSQL); err != nil {
-		log.Printf("Error dropping archived table %s: %v", tableName, err)
+		log.Printf("storage: error dropping archived table %s: %v", tableName, err)
 		return
 	}
-	log.Printf("Successfully dropped archived table %s", tableName)
+	log.Printf("storage: successfully dropped archived table %s", tableName)
 }
 
 func (s *Storage) EnforceRetention(limitBytes int64) error {
@@ -188,13 +208,13 @@ func (s *Storage) EnforceRetention(limitBytes int64) error {
 	for _, file := range parquetFiles {
 		info, err := file.Info()
 		if err != nil {
-			log.Printf("Could not get file info for %s: %v", file.Name(), err)
+			log.Printf("storage: could not get file info for %s: %v", file.Name(), err)
 			continue
 		}
 		totalSize += info.Size()
 	}
 
-	log.Printf("Current parquet files size: %d bytes. Limit: %d bytes.", totalSize, limitBytes)
+	log.Printf("storage: current parquet files size: %d bytes. Limit: %d bytes.", totalSize, limitBytes)
 
 	for totalSize > limitBytes {
 		if len(parquetFiles) == 0 {
@@ -205,19 +225,19 @@ func (s *Storage) EnforceRetention(limitBytes int64) error {
 
 		info, err := oldestFile.Info()
 		if err != nil {
-			log.Printf("Could not get file info for deletion candidate %s: %v", oldestFile.Name(), err)
+			log.Printf("storage: could not get file info for deletion candidate %s: %v", oldestFile.Name(), err)
 			continue
 		}
 
 		filePath := filepath.Join(s.dataDir, oldestFile.Name())
 		if err := os.Remove(filePath); err != nil {
-			log.Printf("Failed to delete oldest parquet file %s: %v", filePath, err)
+			log.Printf("storage: failed to delete oldest parquet file %s: %v", filePath, err)
 			// Stop trying to delete if one fails
 			break
 		}
 
 		totalSize -= info.Size()
-		log.Printf("Deleted oldest parquet file: %s. New total size: %d bytes", oldestFile.Name(), totalSize)
+		log.Printf("storage: deleted oldest parquet file: %s. New total size: %d bytes", oldestFile.Name(), totalSize)
 	}
 
 	return nil
@@ -228,7 +248,7 @@ func (s *Storage) EnforceRetention(limitBytes int64) error {
 func extractTimestampFromName(filename string) int64 {
 	minTs, _, ok := parseParquetFilename(filename)
 	if !ok {
-		log.Printf("Could not extract timestamp from filename: %s", filename)
+		log.Printf("storage: could not extract timestamp from filename: %s", filename)
 		return 0 // Place unparsable files at the beginning, though they are unlikely to be sorted correctly.
 	}
 	return minTs
@@ -290,7 +310,7 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 
 		minTs, maxTs, ok := parseParquetFilename(file.Name())
 		if !ok {
-			log.Printf("Could not parse filename %s, including it just in case.", file.Name())
+			log.Printf("storage: could not parse filename %s, including it just in case.", file.Name())
 			relevantFiles = append(relevantFiles, filepath.Join(s.dataDir, file.Name()))
 			continue
 		}
@@ -315,12 +335,12 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 
 	fromClause, err := buildFromClause(relevantFiles, includeKubeEvents)
 	if err != nil {
-		log.Println("Query time range resulted in no data sources. Returning empty result.")
+		log.Println("storage: query time range resulted in no data sources. returning empty result.")
 		return s.db.QueryContext(ctx, "SELECT * FROM kube_events WHERE 1=0") // Return empty
 	}
 
 	finalQuery := strings.Replace(query, "$events", fromClause, 1)
-	log.Printf("Executing range query: %s", finalQuery)
+	log.Printf("storage: executing range query: %s", finalQuery)
 
 	return s.db.QueryContext(ctx, finalQuery)
 }
@@ -347,9 +367,13 @@ func buildFromClause(relevantFiles []string, includeKubeEvents bool) (string, er
 	return fmt.Sprintf("(%s)", strings.Join(fromSources, " UNION BY NAME ")), nil
 }
 
-func (s *Storage) AppendEvent(k8sEvent *corev1.Event) error {
-	s.eventCh <- k8sEvent
-	return nil
+func (s *Storage) AppendEvent(ctx context.Context, k8sEvent *corev1.Event) error {
+	select {
+	case s.eventCh <- k8sEvent:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("context cancelled")
+	}
 }
 
 func (s *Storage) runBatchInserter(ctx context.Context) {
@@ -362,25 +386,26 @@ func (s *Storage) runBatchInserter(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Context cancelled, flushing remaining events...")
+			log.Println("storage: context cancelled, flushing remaining events...")
 			if len(batch) > 0 {
 				if err := s.AppendEvents(batch); err != nil {
-					log.Printf("Error appending remaining events: %v", err)
+					log.Printf("storage: error appending remaining events: %v", err)
 				}
 			}
+			s.Close()
 			return
 		case event := <-s.eventCh:
 			batch = append(batch, event)
 			if len(batch) >= 1000 {
 				if err := s.AppendEvents(batch); err != nil {
-					log.Printf("Error appending events: %v", err)
+					log.Printf("storage: error appending events: %v", err)
 				}
 				batch = make([]*corev1.Event, 0, 1000)
 			}
 		case <-ticker.C:
 			if len(batch) > 0 {
 				if err := s.AppendEvents(batch); err != nil {
-					log.Printf("Error appending events on tick: %v", err)
+					log.Printf("storage: error appending events on tick: %v", err)
 				}
 				batch = make([]*corev1.Event, 0, 1000)
 			}
@@ -474,7 +499,7 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("Inserted %d events into kube_events", len(k8sEvents))
+	log.Printf("storage: inserted %d events into kube_events", len(k8sEvents))
 
 	return nil
 }
