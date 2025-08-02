@@ -39,10 +39,10 @@ const RecentCriticalEvents: React.FC<RecentCriticalEventsProps> = ({
       metadata.namespace as namespace,
       involvedObject.name as objectName,
       message,
-      metadata.creationTimestamp as creationTimestamp
+      lastTimestamp as creationTimestamp
     FROM $events 
     WHERE type = 'Warning' 
-    ORDER BY metadata.creationTimestamp DESC 
+    ORDER BY lastTimestamp DESC 
     LIMIT 5
   `;
 

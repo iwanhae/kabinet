@@ -96,7 +96,7 @@ const EventsTable: React.FC<EventsTableProps> = ({ events, onEventClick }) => {
                   minWidth: "150px",
                 }}
               >
-                Created
+                lastTimestamp
               </TableCell>
               <TableCell
                 sx={{
@@ -159,7 +159,7 @@ const EventsTable: React.FC<EventsTableProps> = ({ events, onEventClick }) => {
                     color="text.secondary"
                     sx={{ fontSize: "0.8rem" }}
                   >
-                    {formatTimestamp(event.metadata.creationTimestamp)}
+                    {formatTimestamp(event.lastTimestamp)}
                   </Typography>
                 </TableCell>
                 <TableCell sx={{ py: 1.5, width: "120px", minWidth: "120px" }}>

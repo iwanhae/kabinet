@@ -124,7 +124,7 @@ const MetricsOverview: React.FC = () => {
   const handleMetricClick = (title: string) => {
     const queries: Record<string, string> = {
       "Total Events":
-        "SELECT * FROM $events ORDER BY metadata.creationTimestamp DESC LIMIT 100",
+        "SELECT * FROM $events ORDER BY lastTimestamp DESC LIMIT 100",
       "Error Rate": "type='Warning'",
       "Failed Pods":
         "reason IN ('FailedScheduling', 'Evicted', 'FailedCreatePodSandBox')",

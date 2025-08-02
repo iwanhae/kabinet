@@ -30,7 +30,7 @@ const Discover: React.FC = () => {
 
   // 쿼리가 실행된 경우에만 데이터를 가져옴
   const query = executedQuery
-    ? `SELECT * FROM $events WHERE ${executedQuery} ORDER BY metadata.creationTimestamp DESC LIMIT 100`
+    ? `SELECT * FROM $events WHERE ${executedQuery} ORDER BY lastTimestamp DESC LIMIT 100`
     : null;
 
   const { data, error, isLoading } = useEventsQuery<EventResult>(query);
@@ -75,7 +75,7 @@ const Discover: React.FC = () => {
           Query:{" "}
           <code>
             SELECT * FROM $events WHERE {executedQuery} ORDER BY
-            metadata.creationTimestamp DESC LIMIT 100
+            lastTimestamp DESC LIMIT 100
           </code>
         </Typography>
       )}

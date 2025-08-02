@@ -137,11 +137,11 @@ Notice the single quotes around `'kube-system'` and `'Warning'` are preserved, e
 
 For time-based analysis, it is essential to use the correct timestamp field and appropriate functions.
 
-### Use `metadata.creationTimestamp`
+### Use `lastTimestamp`
 
-The primary timestamp for events is `metadata.creationTimestamp`. The `eventTime` field is deprecated and may contain null or incorrect values, making it unreliable for temporal queries.
+The primary timestamp for events is `lastTimestamp`. The `eventTime` field is deprecated and may contain null or incorrect values, making it unreliable for temporal queries.
 
-**Always use `metadata.creationTimestamp` for any time-based analysis.**
+**Always use `lastTimestamp` for any time-based analysis.**
 
 ### Time-Windowing Functions
 
@@ -157,7 +157,7 @@ This query pattern is used by the `EventsTimelineChart` component. The `${interv
 
 ```sql
 SELECT
-    time_bucket(INTERVAL '${interval}', metadata.creationTimestamp) AS time_bucket,
+    time_bucket(INTERVAL '${interval}', lastTimestamp) AS time_bucket,
     type,
     COUNT(*) AS count
 FROM $events
@@ -170,7 +170,7 @@ ORDER BY time_bucket, type
 
 ```sql
 SELECT
-    time_bucket(INTERVAL 15 MINUTE, metadata.creationTimestamp) AS bucket,
+    time_bucket(INTERVAL 15 MINUTE, lastTimestamp) AS bucket,
     reason,
     COUNT(*) AS count
 FROM $events

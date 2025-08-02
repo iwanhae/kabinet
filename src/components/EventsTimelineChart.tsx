@@ -26,13 +26,13 @@ const EventsTimelineChart: React.FC<Props> = ({ where = "1=1" }) => {
 
     return `
       SELECT 
-        time_bucket(INTERVAL '${interval}', metadata.creationTimestamp) AS time_bucket,
+        time_bucket(INTERVAL '${interval}', lastTimestamp) AS time_bucket,
         type,
         COUNT(*) AS count
       FROM $events 
       WHERE ${where}
-      AND metadata.creationTimestamp >= '${from}'
-      AND metadata.creationTimestamp <= '${to}'
+      AND lastTimestamp >= '${from}'
+      AND lastTimestamp <= '${to}'
       GROUP BY time_bucket, type
       ORDER BY time_bucket, type
     `;
