@@ -15,10 +15,10 @@ Monitoring Kubernetes events is crucial for maintaining cluster health. However,
 Kube Event Analyzer addresses these problems with a streamlined, all-in-one approach:
 
 - **Real-Time Collection**: Uses the Kubernetes `WATCH` API to subscribe to events directly, ensuring minimal latency.
-- **Efficient Storage**: Events are initially stored in an in-memory DuckDB database for fast ingestion. They are then periodically archived into compressed Parquet files (`zstd` compression) for long-term storage, offering a great balance between performance and disk space.
+- **Efficient Storage**: Events are initially stored in a fast, file-backed DuckDB database for durable ingestion. They are then periodically archived into compressed Parquet files (`zstd` compression) for long-term storage, offering a great balance between performance and disk space.
 - **Automated Data Lifecycle**: The tool automatically manages data retention. It archives recent events into Parquet files at a configurable interval and prunes the oldest files when a predefined storage limit is reached.
 - **Simplified Architecture**: Runs as a single binary, containing both the event collector and API server for querying data. This eliminates the need for external databases or complex pipelines.
-- **Powerful Analytics**: By leveraging DuckDB, it can query both the real-time in-memory data and the historical Parquet files simultaneously, providing a unified view for analysis.
+- **Powerful Analytics**: By leveraging DuckDB, it can query both the real-time data from its local database file and the historical Parquet files simultaneously, providing a unified view for analysis.
 - **Rich Web Interface**: Features a modern, responsive React-based web UI with real-time dashboards, advanced query builder, and interactive visualizations.
 
 ## Architecture
@@ -28,9 +28,9 @@ The project is a single Go binary that consists of three main components:
 1.  **Collector & Storage Manager**: A background service that:
 
     - Connects to the Kubernetes API server.
-    - Uses a `RetryWatcher` to reliably watch for cluster events, automatically resuming from the last known `resourceVersion` upon restart.
-    - Appends incoming events to a `kube_events` table in DuckDB.
-    - At a regular interval, archives the events from the DuckDB table to a ZSTD-compressed Parquet file using a lock-free table-swapping mechanism.
+    - Uses the `client-go` informer framework to reliably watch for cluster events, automatically resuming from the last known `resourceVersion`.
+    - Appends incoming events to a `kube_events` table in a local DuckDB database file.
+    - At a regular interval, archives the events from the DuckDB table to a ZSTD-compressed Parquet file using an efficient table-swapping mechanism.
     - Enforces a storage limit by deleting the oldest Parquet files when the total size exceeds the configured capacity.
 
 2.  **API Server**: A REST API that:
@@ -148,14 +148,18 @@ graph LR
 
 ### Docker Deployment
 
+The application can be configured via environment variables. See the **Configuration** section below for details.
+
 ```bash
 # Build the Docker image
 docker build -t kube-event-analyzer .
 
-# Run with persistent data storage
+# Run with persistent data storage and custom configuration
 docker run -d \
   --name kube-event-analyzer \
   -p 8080:8080 \
+  -e ARCHIVE_INTERVAL=3h \
+  -e STORAGE_LIMIT_GB=10 \
   -v ~/.kube/config:/root/.kube/config:ro \
   -v $(pwd)/data:/data \
   kube-event-analyzer
@@ -170,10 +174,9 @@ Once running, open your browser to `http://localhost:8080` to access:
 
 ## Key Features
 
-### **Real-Time Event Collection**
-- Watches Kubernetes events using the efficient `WATCH` API
-- Automatic recovery from connection interruptions with resource version tracking
-- Zero data loss with robust error handling and retry mechanisms
+### **High Reliability**
+- Reliably watches Kubernetes events using the `client-go` informer framework, which automatically handles reconnections and resynchronization.
+- Features graceful shutdown to ensure all in-flight events are processed and saved before the application terminates.
 
 ### **Rich Analytics Dashboard**
 - **Event Timeline Charts**: Interactive visualizations of event patterns over time
@@ -190,7 +193,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 - **Real-time Filtering**: Dynamic event filtering and searching
 
 ### **Intelligent Storage Management**
-- **Hybrid Storage**: Fast in-memory DuckDB for recent data, compressed Parquet for archives
+- **Hybrid Storage**: A fast, file-backed DuckDB instance for recent data, compressed Parquet for archives
 - **Automatic Archiving**: Configurable intervals for data lifecycle management (default: 3 hours)
 - **Space Management**: Automatic cleanup when storage limits are reached (default: 10GB)
 - **ZSTD Compression**: Efficient compression for long-term storage (Roughtly 10x smaller than just storing the raw events)
@@ -261,6 +264,16 @@ curl -X POST http://localhost:8080/query \
 - `GET /discover` - Query builder interface
 
 For detailed query examples and advanced usage, see `DEVELOPMENT_QUERY_GUIDE.md`.
+
+## Configuration
+
+The application can be configured using the following environment variables:
+
+| Variable            | Description                                               | Default      | Example    |
+| ------------------- | --------------------------------------------------------- | ------------ | ---------- |
+| `ARCHIVE_INTERVAL`  | The time interval for archiving events to Parquet files.  | `3h`         | `1h30m`    |
+| `STORAGE_LIMIT_GB`  | The maximum size of the data directory in gigabytes.      | `10`         | `20`       |
+| `LISTEN_PORT`       | The port on which the API server will listen.             | `8080`       | `8888`     |
 
 ## Development
 

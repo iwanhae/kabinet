@@ -9,10 +9,10 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/iwanhae/kube-event-analyzer/internal/api"
 	"github.com/iwanhae/kube-event-analyzer/internal/collector"
+	"github.com/iwanhae/kube-event-analyzer/internal/config"
 	"github.com/iwanhae/kube-event-analyzer/internal/storage"
 )
 
@@ -20,6 +20,8 @@ import (
 var distFS embed.FS
 
 func main() {
+	cfg := config.Load()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
@@ -47,11 +49,11 @@ func main() {
 	}()
 
 	// --- API Server ---
-	apiServer := api.New(storage, "8080", distFS)
+	apiServer := api.New(storage, cfg.ListenPort, distFS)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		log.Println("main: starting API server...")
+		log.Printf("main: starting API server on port %s...", cfg.ListenPort)
 		if err := apiServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("main: API server failed: %v", err)
 		}
@@ -63,7 +65,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		log.Println("main: starting data lifecycle manager...")
-		storage.LifecycleManager(ctx, 3*time.Hour, 10*1024*1024*1024) // 3 hour interval, 10GB limit
+		storage.LifecycleManager(ctx, cfg.ArchiveInterval, cfg.StorageLimitBytes)
 		log.Println("main: data lifecycle manager finished")
 	}()
 
