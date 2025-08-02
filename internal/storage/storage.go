@@ -21,8 +21,11 @@ import (
 type Storage struct {
 	writerMu sync.Mutex
 	writer   *sql.DB
+
+	readerMu sync.Mutex
 	reader   *sql.DB
 
+	dbPath  string
 	dataDir string
 
 	eventCh chan *corev1.Event
@@ -45,27 +48,32 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create writer: %w", err)
 	}
 	if _, err := writer.Exec(createTableSQL); err != nil {
-		writer.Close()
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
 	reader, err := sql.Open("duckdb", ":memory:?preserve_insertion_order=false")
 	if err != nil {
-		writer.Close()
 		return nil, fmt.Errorf("failed to create reader: %w", err)
 	}
+
+	// test attach
 	if _, err := reader.Exec(fmt.Sprintf("ATTACH '%s' AS events (READ_ONLY);", dbPath)); err != nil {
-		reader.Close()
-		writer.Close()
 		return nil, fmt.Errorf("failed to attach database: %w", err)
+	}
+	// test detach
+	if _, err := reader.Exec("DETACH events"); err != nil {
+		return nil, fmt.Errorf("failed to detach database: %w", err)
 	}
 
 	s := &Storage{
-		writer:  writer,
-		reader:  reader,
-		dataDir: dataDir,
-		eventCh: make(chan *corev1.Event, 10000),
-		wg:      &sync.WaitGroup{},
+		writerMu: sync.Mutex{},
+		writer:   writer,
+		readerMu: sync.Mutex{},
+		reader:   reader,
+		dbPath:   dbPath,
+		dataDir:  dataDir,
+		eventCh:  make(chan *corev1.Event, 10000),
+		wg:       &sync.WaitGroup{},
 	}
 	s.wg.Add(1)
 	go func() {
@@ -358,6 +366,22 @@ type RangeQueryResult struct {
 // RangeQuery executes a range query against the storage.
 // It executes the query by substituting the $events placeholder with the appropriate FROM clause.
 func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.Time) (*sql.Rows, *RangeQueryResult, error) {
+	s.readerMu.Lock()
+	defer s.readerMu.Unlock()
+	if ctx.Err() != nil {
+		return nil, nil, fmt.Errorf("failed fast: %w", ctx.Err())
+	}
+	// attach
+	if _, err := s.reader.Exec(fmt.Sprintf("ATTACH '%s' AS events (READ_ONLY);", s.dbPath)); err != nil {
+		return nil, nil, fmt.Errorf("failed to attach database: %w", err)
+	}
+	// detach
+	defer func() {
+		if _, err := s.reader.Exec("DETACH events"); err != nil {
+			log.Printf("storage: error detaching database: %v", err)
+		}
+	}()
+
 	files, err := os.ReadDir(s.dataDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read data directory: %w", err) // TODO: retry?

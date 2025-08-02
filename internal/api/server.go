@@ -19,15 +19,12 @@ import (
 type Server struct {
 	storage *storage.Storage
 	server  *http.Server
-
-	limitCh chan struct{}
 }
 
 // New creates a new API server.
 func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	s := &Server{
 		storage: storage,
-		limitCh: make(chan struct{}, 2),
 	}
 
 	mux := http.NewServeMux()
@@ -112,20 +109,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.limitCh <- struct{}{}
-	defer func() {
-		<-s.limitCh
-	}()
-
-	ctx := r.Context()
-
-	if ctx.Err() != nil {
-		// Fast fail if the request is cancelled by the client
-		http.Error(w, "server: request cancelled", http.StatusInternalServerError)
-		return
-	}
-
-	rows, result, err := s.storage.RangeQuery(ctx, req.Query, req.Start, req.End)
+	rows, result, err := s.storage.RangeQuery(r.Context(), req.Query, req.Start, req.End)
 	if err != nil {
 		log.Printf("server: failed to execute query: %v", err)
 		http.Error(w, fmt.Sprintf("server: failed to execute query: %v", err), http.StatusInternalServerError)
