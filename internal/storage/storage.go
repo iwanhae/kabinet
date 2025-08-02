@@ -13,13 +13,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marcboeker/go-duckdb/v2"
+	_ "github.com/marcboeker/go-duckdb/v2"
 	corev1 "k8s.io/api/core/v1"
 )
 
 type Storage struct {
-	db        *sql.DB
-	connector *duckdb.Connector
+	writer *sql.DB
+	reader *sql.DB
 
 	dataDir   string
 	archiveMu sync.Mutex
@@ -34,23 +34,32 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	connector, err := duckdb.NewConnector(dbPath, nil)
+	writer, err := sql.Open("duckdb", dbPath+"?access_mode=READ_WRITE&threads=2")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create duckdb connector: %w", err)
+		return nil, fmt.Errorf("failed to create writer: %w", err)
 	}
-
-	db := sql.OpenDB(connector)
-	if _, err := db.Exec(createTableSQL); err != nil {
-		db.Close()
+	if _, err := writer.Exec(createTableSQL); err != nil {
+		writer.Close()
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
+	reader, err := sql.Open("duckdb", ":memory:?threads=2")
+	if err != nil {
+		writer.Close()
+		return nil, fmt.Errorf("failed to create reader: %w", err)
+	}
+	if _, err := reader.Exec(fmt.Sprintf("ATTACH '%s' AS read_only", dbPath)); err != nil {
+		reader.Close()
+		writer.Close()
+		return nil, fmt.Errorf("failed to attach database: %w", err)
+	}
+
 	s := &Storage{
-		db:        db,
-		connector: connector,
-		dataDir:   dataDir,
-		eventCh:   make(chan *corev1.Event, 10000),
-		wg:        &sync.WaitGroup{},
+		writer:  writer,
+		reader:  reader,
+		dataDir: dataDir,
+		eventCh: make(chan *corev1.Event, 10000),
+		wg:      &sync.WaitGroup{},
 	}
 	s.wg.Add(1)
 	go func() {
@@ -68,11 +77,11 @@ func (s *Storage) Wait() {
 
 func (s *Storage) Close() {
 	log.Println("storage: closing storage...")
-	if err := s.db.Close(); err != nil {
+	if err := s.writer.Close(); err != nil {
 		log.Printf("storage: error closing database: %v", err)
 	}
-	if err := s.connector.Close(); err != nil {
-		log.Printf("storage: error closing connector: %v", err)
+	if err := s.reader.Close(); err != nil {
+		log.Printf("storage: error closing database: %v", err)
 	}
 	log.Println("storage: closed successfully")
 }
@@ -104,7 +113,7 @@ func (s *Storage) Archive(ctx context.Context) error {
 	defer s.archiveMu.Unlock()
 
 	var count int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM kube_events").Scan(&count); err != nil {
+	if err := s.reader.QueryRowContext(ctx, "SELECT COUNT(*) FROM kube_events").Scan(&count); err != nil {
 		return fmt.Errorf("failed to count rows in kube_events: %w", err)
 	}
 
@@ -116,7 +125,7 @@ func (s *Storage) Archive(ctx context.Context) error {
 	archiveTableName := fmt.Sprintf("kube_events_archive_%d", time.Now().UnixNano())
 	log.Printf("storage: archiving %d events to table %s", count, archiveTableName)
 
-	tx, err := s.db.Begin()
+	tx, err := s.writer.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -142,7 +151,7 @@ func (s *Storage) Archive(ctx context.Context) error {
 
 	var minTime, maxTime time.Time
 	query := fmt.Sprintf("SELECT MIN(metadata.creationTimestamp), MAX(metadata.creationTimestamp) FROM %s", archiveTableName)
-	if err := s.db.QueryRowContext(ctx, query).Scan(&minTime, &maxTime); err != nil {
+	if err := s.reader.QueryRowContext(ctx, query).Scan(&minTime, &maxTime); err != nil {
 		log.Printf("storage: failed to get min/max timestamps for table %s: %v. proceeding with fallback naming", archiveTableName, err)
 	}
 
@@ -157,7 +166,7 @@ func (s *Storage) processArchivedTable(tableName string, minTime, maxTime time.T
 	parquetFileName := filepath.Join(s.dataDir, fmt.Sprintf("events_%d_%d.parquet", minTime.Unix(), maxTime.Unix()))
 
 	// Using a new connection for the background task
-	conn, err := s.db.Conn(context.Background())
+	conn, err := s.reader.Conn(context.Background())
 	if err != nil {
 		log.Printf("storage: error getting connection for background processing: %v", err)
 		return
@@ -336,19 +345,19 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 	fromClause, err := buildFromClause(relevantFiles, includeKubeEvents)
 	if err != nil {
 		log.Println("storage: query time range resulted in no data sources. returning empty result.")
-		return s.db.QueryContext(ctx, "SELECT * FROM kube_events WHERE 1=0") // Return empty
+		return s.reader.QueryContext(ctx, "SELECT * FROM kube_events WHERE 1=0") // Return empty
 	}
 
 	finalQuery := strings.Replace(query, "$events", fromClause, 1)
 	log.Printf("storage: executing range query: %s", finalQuery)
 
-	return s.db.QueryContext(ctx, finalQuery)
+	return s.reader.QueryContext(ctx, finalQuery)
 }
 
 func buildFromClause(relevantFiles []string, includeKubeEvents bool) (string, error) {
 	var fromSources []string
 	if includeKubeEvents {
-		fromSources = append(fromSources, "SELECT * FROM kube_events")
+		fromSources = append(fromSources, "SELECT * FROM read_only.kube_events")
 	}
 
 	if len(relevantFiles) > 0 {
@@ -419,7 +428,7 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 	}
 
 	// BEGIN TRANSACTION
-	tx, err := s.db.Begin()
+	tx, err := s.writer.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -502,20 +511,4 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 	log.Printf("storage: inserted %d events into kube_events", len(k8sEvents))
 
 	return nil
-}
-
-func (s *Storage) GetLastResourceVersion() (string, error) {
-	var resourceVersion string
-	// Order by eventTime DESC and then resourceVersion DESC to handle events with the same timestamp.
-	// We are casting resourceVersion to a UINTEGER for sorting because Kubernetes resourceVersions are
-	// large numbers represented as strings.
-	err := s.db.QueryRow("SELECT metadata.resourceVersion FROM kube_events ORDER BY eventTime DESC, TRY_CAST(metadata.resourceVersion AS UINTEGER) DESC LIMIT 1").Scan(&resourceVersion)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			// If the table is empty, we don't have a resource version to start from.
-			return "", nil
-		}
-		return "", fmt.Errorf("failed to query last resource version: %w", err)
-	}
-	return resourceVersion, nil
 }

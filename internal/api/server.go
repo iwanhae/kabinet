@@ -101,6 +101,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.storage.RangeQuery(r.Context(), req.Query, req.Start, req.End)
 	if err != nil {
+		log.Printf("server: failed to execute query: %v", err)
 		http.Error(w, fmt.Sprintf("server: failed to execute query: %v", err), http.StatusInternalServerError)
 		return
 	}
