@@ -48,27 +48,24 @@ The project is a single Go binary that consists of three main components:
 ### Data Flow Diagram
 
 ```mermaid
-graph TD
+graph LR
     A["K8s API Server"] -- "Events" --> B["Event Collector"]
     
     subgraph "Kube Event Analyzer"
-        B --> C["DuckDB In-Memory Table"]
-        
-        subgraph "Data Lifecycle Manager"
-            D["Archive Timer<br/>(3h interval)"] --> E["Archive Process"]
-            E --> F["Parquet Files<br/>(ZSTD compressed)"]
-            E --> G["Cleanup<br/>(10GB limit)"]
-        end
-        
-        C --> E
-        
         subgraph "API & Web Server"
             H["HTTP Server :8080"] --> I["Query Endpoint"]
             H --> J["Static Web Files"]
             I --> K["DuckDB Query Engine"]
-            K --> C
-            K --> F
         end
+        
+        subgraph "Data Lifecycle Manager"
+            D["Archive Timer<br/>(3h interval)"] --> E["Archive Process"]
+        end
+				B --"INSERT"--> C["DuckDB Table"]
+				E --"Rotate Table"--> C
+        E --"Save & Delete"--> F["Parquet Files<br/>(ZSTD compressed)"]
+        K --"SELECT"--> C
+        K --"SELECT"--> F
     end
     
     L["Users"] --> M["React Web UI<br/>(Analytics & Discover)"]
@@ -108,13 +105,14 @@ graph TD
 ### Prerequisites
 
 - Go 1.24+
-- Node.js 18+ (for frontend development)
+- Node.js 22+ (for frontend development)
 - Access to a Kubernetes cluster (a valid `kubeconfig` file)
 - DuckDB (automatically installed in Docker builds)
 
 ### Development Setup
 
 1.  **Install dependencies**:
+    
     ```bash
     # Install Go dependencies
     go mod download
@@ -122,7 +120,7 @@ graph TD
     # Install frontend dependencies
     npm install
     ```
-
+    
 2.  **Run in development mode**:
     ```bash
     # Terminal 1: Start the frontend dev server
@@ -195,7 +193,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 - **Hybrid Storage**: Fast in-memory DuckDB for recent data, compressed Parquet for archives
 - **Automatic Archiving**: Configurable intervals for data lifecycle management (default: 3 hours)
 - **Space Management**: Automatic cleanup when storage limits are reached (default: 10GB)
-- **ZSTD Compression**: Efficient compression for long-term storage
+- **ZSTD Compression**: Efficient compression for long-term storage (Roughtly 10x smaller than just storing the raw events)
 
 ### **Developer-Friendly**
 - **Modern Tech Stack**: React, TypeScript, Material-UI, SWR for data fetching
