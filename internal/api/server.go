@@ -117,7 +117,15 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		<-s.limitCh
 	}()
 
-	rows, result, err := s.storage.RangeQuery(r.Context(), req.Query, req.Start, req.End)
+	ctx := r.Context()
+
+	if ctx.Err() != nil {
+		// Fast fail if the request is cancelled by the client
+		http.Error(w, "server: request cancelled", http.StatusInternalServerError)
+		return
+	}
+
+	rows, result, err := s.storage.RangeQuery(ctx, req.Query, req.Start, req.End)
 	if err != nil {
 		log.Printf("server: failed to execute query: %v", err)
 		http.Error(w, fmt.Sprintf("server: failed to execute query: %v", err), http.StatusInternalServerError)
