@@ -11,8 +11,8 @@ import {
   CircularProgress,
   Alert,
 } from "@mui/material";
-import { Link } from "wouter";
 import { useEventsQuery } from "../hooks/useEventsQuery";
+import { Link } from "./Link";
 
 interface CriticalEvent {
   uid: string;
@@ -106,7 +106,6 @@ const RecentCriticalEvents: React.FC<RecentCriticalEventsProps> = ({
         <List dense sx={{ p: 0, maxHeight: 500, overflowY: "auto" }}>
           {events.map((event) => {
             const query = `reason='${event.reason}' AND metadata.namespace='${event.namespace}'`;
-            const href = `/discover?where=${encodeURIComponent(query)}`;
 
             return (
               <ListItem
@@ -130,7 +129,7 @@ const RecentCriticalEvents: React.FC<RecentCriticalEventsProps> = ({
                       color={getEventTypeColor(event.type)}
                       sx={{ mr: 1, minWidth: 70, fontSize: "0.7rem" }}
                     />
-                    <Link href={href} style={{ textDecoration: "none" }}>
+                    <Link page="discover" params={{ where: query }}>
                       <Typography
                         variant="body2"
                         sx={{

@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import { styled } from "@mui/material/styles";
 import { Close } from "@mui/icons-material";
-import { Link } from "wouter";
+import { Link } from "./Link";
 import type { EventResult } from "../types/events";
 
 interface EventDetailDrawerProps {
@@ -65,10 +65,9 @@ const ClickableCell: React.FC<{
     return <TableCell />;
   }
   const query = `${field}='${value}'`;
-  const href = `/discover?where=${encodeURIComponent(query)}`;
   return (
     <TableCell>
-      <Link href={href} onClick={onClose}>
+      <Link page="discover" params={{ where: query }} onClick={onClose}>
         {value}
       </Link>
     </TableCell>
@@ -84,10 +83,9 @@ const ClickableChipCell: React.FC<{
     return <TableCell />;
   }
   const query = `${field}='${value}'`;
-  const href = `/discover?where=${encodeURIComponent(query)}`;
   return (
     <TableCell>
-      <Link href={href} onClick={onClose}>
+      <Link page="discover" params={{ where: query }} onClick={onClose}>
         <EventTypeChip label={value} size="small" eventType={value} />
       </Link>
     </TableCell>

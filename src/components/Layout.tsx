@@ -18,6 +18,7 @@ import LightModeIcon from "@mui/icons-material/LightMode";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import { useTheme } from "../contexts/ThemeContext";
 import { TimeRangePicker } from "./TimeRangePicker";
+import { useNavigation } from "../hooks/useNavigation";
 
 const StyledAppBar = styled(AppBar)(({ theme }: { theme: Theme }) => ({
   boxShadow: "none",
@@ -54,15 +55,31 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [location] = useLocation();
+  const navigate = useNavigation();
   const { isDarkMode, toggleTheme } = useTheme();
 
   const menuItems = [
-    { text: "Insight", href: "/", icon: <InsightsIcon /> },
-    { text: "Discover", href: "/discover", icon: <TravelExploreIcon /> },
+    {
+      text: "Insight",
+      href: navigate({ page: "insight" }),
+      icon: <InsightsIcon />,
+    },
+    {
+      text: "Discover",
+      href: navigate({
+        page: "discover",
+        params: {
+          where: "1=1",
+        },
+      }),
+      icon: <TravelExploreIcon />,
+    },
   ];
 
   // 현재 경로에 맞는 탭 인덱스 계산
-  const currentTabIndex = menuItems.findIndex((item) => item.href === location);
+  const currentTabIndex = menuItems.findIndex(
+    (item) => item.href.split("?")[0] === location,
+  );
 
   return (
     <Box>

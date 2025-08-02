@@ -12,7 +12,7 @@ import {
   CircularProgress,
   Alert,
 } from "@mui/material";
-import { Link } from "wouter";
+import { Link } from "./Link";
 import { useEventsQuery } from "../hooks/useEventsQuery";
 
 interface NamespaceData {
@@ -91,7 +91,6 @@ const TopNoisyNamespaces: React.FC<TopNoisyNamespacesProps> = ({ data }) => {
         <List dense sx={{ p: 0, maxHeight: 500, overflowY: "auto" }}>
           {namespaces.map((item, index) => {
             const query = `metadata.namespace='${item.namespace}' AND type='Warning'`;
-            const href = `/discover?where=${encodeURIComponent(query)}`;
 
             return (
               <ListItem
@@ -128,7 +127,11 @@ const TopNoisyNamespaces: React.FC<TopNoisyNamespacesProps> = ({ data }) => {
 
                   <ListItemText
                     primary={
-                      <Link href={href} style={{ textDecoration: "none" }}>
+                      <Link
+                        page="discover"
+                        params={{ where: query }}
+                        style={{ textDecoration: "none" }}
+                      >
                         <Typography
                           variant="body2"
                           sx={{

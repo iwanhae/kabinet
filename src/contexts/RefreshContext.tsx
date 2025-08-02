@@ -11,7 +11,7 @@ export const RefreshProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [refreshKey, setRefreshKey] = useState(0);
-  
+
   const triggerRefresh = () => {
     setRefreshKey((prevKey) => prevKey + 1);
   };
@@ -23,6 +23,7 @@ export const RefreshProvider: React.FC<{ children: React.ReactNode }> = ({
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useRefresh = (): RefreshContextType => {
   const context = useContext(RefreshContext);
   if (!context) {

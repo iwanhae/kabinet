@@ -49,9 +49,8 @@ const fetcher = async <T>(
   });
 
   if (!response.ok) {
-    throw new Error(
-      `An error occurred while fetching the data: ${response.statusText}`,
-    );
+    const body = await response.text();
+    throw new Error(`An error occurred while fetching the data: ${body}`);
   }
 
   const data: ApiResponse<T> | ApiErrorResponse = await response.json();

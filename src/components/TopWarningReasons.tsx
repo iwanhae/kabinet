@@ -12,7 +12,7 @@ import {
   CircularProgress,
   Alert,
 } from "@mui/material";
-import { Link } from "wouter";
+import { Link } from "./Link";
 import { useEventsQuery } from "../hooks/useEventsQuery";
 
 interface WarningReasonData {
@@ -93,7 +93,6 @@ const TopWarningReasons: React.FC<TopWarningReasonsProps> = ({ data }) => {
         <List dense sx={{ p: 0, maxHeight: 500, overflowY: "auto" }}>
           {reasons.map((item, index) => {
             const query = `reason='${item.reason}' AND type='Warning'`;
-            const href = `/discover?where=${encodeURIComponent(query)}`;
 
             return (
               <ListItem
@@ -130,7 +129,11 @@ const TopWarningReasons: React.FC<TopWarningReasonsProps> = ({ data }) => {
 
                   <ListItemText
                     primary={
-                      <Link href={href} style={{ textDecoration: "none" }}>
+                      <Link
+                        page="discover"
+                        params={{ where: query }}
+                        style={{ textDecoration: "none" }}
+                      >
                         <Typography
                           variant="body2"
                           sx={{

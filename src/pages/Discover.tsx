@@ -74,8 +74,8 @@ const Discover: React.FC = () => {
         <Typography variant="body2" color="text.secondary" gutterBottom>
           Query:{" "}
           <code>
-            SELECT * FROM $events WHERE {executedQuery} ORDER BY
-            lastTimestamp DESC LIMIT 100
+            SELECT * FROM $events WHERE {executedQuery} ORDER BY lastTimestamp
+            DESC LIMIT 100
           </code>
         </Typography>
       )}
