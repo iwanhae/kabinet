@@ -7,156 +7,153 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-const connectionWarmupAfter = 5 * time.Second
-
 // Reader is responsible for reading events and executing queries.
 type Reader struct {
-	queryMu sync.Mutex // A mutex to serialize read queries, primarily to control memory usage.
-	connMgr *connectionManager
-	dataDir string
-}
-
-// ParquetFileInfo holds metadata about a single Parquet file.
-type ParquetFileInfo struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	queryMu     sync.Mutex // Ensures only one query runs at a time to control memory usage.
+	dbPath      string     // Path to the writer's database file.
+	parquetPath string     // Path to the directory containing parquet files.
 }
 
 // RangeQueryResult holds the result and metadata of a range query.
 type RangeQueryResult struct {
-	Duration time.Duration     `json:"duration_ms"`
-	Files    []ParquetFileInfo `json:"files"`
+	Duration time.Duration `json:"duration_ms"`
+	Files    []string      `json:"files"`
 }
 
 // NewReader creates and initializes a new Reader instance.
-func NewReader(dbPath string) (*Reader, error) {
-	dataDir := filepath.Dir(dbPath)
-	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
-		return nil, fmt.Errorf("data directory %s does not exist. The Writer must be initialized first", dataDir)
+func NewReader(dbPath string, parquetPath string) (*Reader, error) {
+	// The reader now runs in a separate container, so it should not create directories.
+	// It assumes the writer has already created them.
+	if _, err := os.Stat(filepath.Dir(dbPath)); os.IsNotExist(err) {
+		log.Printf("reader: db directory %s does not exist. waiting for writer to create it.", filepath.Dir(dbPath))
+	}
+	if _, err := os.Stat(parquetPath); os.IsNotExist(err) {
+		log.Printf("reader: parquet directory %s does not exist. waiting for writer to create it.", parquetPath)
 	}
 
 	return &Reader{
-		connMgr: newConnectionManager(dbPath, connectionWarmupAfter),
-		dataDir: dataDir,
+		dbPath:      dbPath,
+		parquetPath: parquetPath,
 	}, nil
 }
 
 // RangeQuery executes a query against a specified time range.
 func (r *Reader) RangeQuery(ctx context.Context, query string, start, end time.Time) (*sql.Rows, *RangeQueryResult, error) {
-	// Rule: Execute only one read query at a time to control memory usage.
 	r.queryMu.Lock()
 	defer r.queryMu.Unlock()
 
 	if ctx.Err() != nil {
-		return nil, nil, fmt.Errorf("failed fast: %w", ctx.Err())
+		return nil, nil, fmt.Errorf("query context cancelled: %w", ctx.Err())
 	}
 
-	files, err := os.ReadDir(r.dataDir)
+	// Create a temporary in-memory database for the query.
+	conn, err := sql.Open("duckdb", "") // Empty DSN for in-memory
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read data directory: %w", err)
+		return nil, nil, fmt.Errorf("failed to open in-memory db: %w", err)
+	}
+	defer conn.Close()
+
+	// ATTACH the writer's database for real-time data.
+	attachSQL := fmt.Sprintf("ATTACH '%s' AS hot_storage (READ_ONLY);", r.dbPath)
+	if _, err := conn.ExecContext(ctx, attachSQL); err != nil {
+		// If the db file doesn't exist yet, we can still query parquet files.
+		if os.IsNotExist(err) {
+			log.Printf("reader: writer db not found at %s, querying parquet files only.", r.dbPath)
+		} else {
+			return nil, nil, fmt.Errorf("failed to attach writer db: %w", err)
+		}
+	}
+	defer conn.Exec("DETACH hot_storage;")
+
+	// Find relevant parquet files.
+	relevantFiles, err := r.findRelevantParquetFiles(start, end)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to find relevant parquet files: %w", err)
+	}
+
+	fromClause, err := r.buildFromClause(relevantFiles)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot build query: %w", err)
+	}
+
+	finalQuery := strings.Replace(query, "$events", fromClause, 1)
+	log.Printf("reader: executing query: %s", finalQuery)
+
+	startTime := time.Now()
+	rows, err := conn.QueryContext(ctx, finalQuery)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	result := &RangeQueryResult{
+		Duration: time.Since(startTime),
+		Files:    relevantFiles,
+	}
+
+	return rows, result, nil
+}
+
+func (r *Reader) findRelevantParquetFiles(start, end time.Time) ([]string, error) {
+	files, err := os.ReadDir(r.parquetPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // It's okay if the directory doesn't exist yet.
+		}
+		return nil, fmt.Errorf("failed to read parquet directory: %w", err)
 	}
 
 	queryStartTs := start.Unix()
 	queryEndTs := end.Unix()
 
-	var relevantFiles []ParquetFileInfo
+	var relevantFiles []string
 	for _, file := range files {
 		if file.IsDir() || !strings.HasSuffix(file.Name(), ".parquet") {
-			continue
-		}
-		info, err := file.Info()
-		if err != nil {
-			log.Printf("reader: could not get file info for %s: %v", file.Name(), err)
 			continue
 		}
 
 		minTs, maxTs, ok := parseParquetFilename(file.Name())
 		if !ok {
-			// Include the file just in case, as we can't be sure of its time range.
-			log.Printf("reader: could not parse filename %s, including it", file.Name())
-			relevantFiles = append(relevantFiles, ParquetFileInfo{Path: filepath.Join(r.dataDir, file.Name()), Size: info.Size()})
+			log.Printf("reader: could not parse filename %s, including it just in case.", file.Name())
+			relevantFiles = append(relevantFiles, filepath.Join(r.parquetPath, file.Name()))
 			continue
 		}
 
-		// File range overlaps with query range if:
-		// (file_start <= query_end) AND (file_end >= query_start)
+		// File range overlaps with query range if: (file_start <= query_end) AND (file_end >= query_start)
 		if maxTs >= queryStartTs && minTs <= queryEndTs {
-			relevantFiles = append(relevantFiles, ParquetFileInfo{Path: filepath.Join(r.dataDir, file.Name()), Size: info.Size()})
+			relevantFiles = append(relevantFiles, filepath.Join(r.parquetPath, file.Name()))
 		}
 	}
-
-	fromClause, err := buildFromClause(relevantFiles, true) // Always include the live db file.
-	if err != nil {
-		return nil, nil, fmt.Errorf("query time range resulted in no data sources")
-	}
-
-	finalQuery := strings.Replace(query, "$events", fromClause, 1)
-
-	executor, err := r.connMgr.Get()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get a read connection: %w", err)
-	}
-
-	log.Printf("reader: executing range query: %s", finalQuery)
-	now := time.Now()
-	rows, err := executor.QueryContext(ctx, finalQuery)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return rows, &RangeQueryResult{
-		Duration: time.Since(now),
-		Files:    relevantFiles,
-	}, nil
+	return relevantFiles, nil
 }
 
-// Close safely shuts down the connection manager.
-func (r *Reader) Close() {
-	log.Println("reader: closing...")
-	r.connMgr.Close()
-	log.Println("reader: closed.")
-}
-
-func buildFromClause(relevantFiles []ParquetFileInfo, includeKubeEvents bool) (string, error) {
+func (r *Reader) buildFromClause(parquetFiles []string) (string, error) {
 	var fromSources []string
-	if includeKubeEvents {
-		fromSources = append(fromSources, SQLSelectFromKubeEvents)
-	}
 
-	if len(relevantFiles) > 0 {
-		paths := make([]string, len(relevantFiles))
-		for i, f := range relevantFiles {
-			paths[i] = fmt.Sprintf("'%s'", f.Path)
+	// Always try to include the hot storage table.
+	fromSources = append(fromSources, "SELECT * FROM hot_storage.kube_events")
+
+	if len(parquetFiles) > 0 {
+		quotedFiles := make([]string, len(parquetFiles))
+		for i, p := range parquetFiles {
+			quotedFiles[i] = fmt.Sprintf("'%s'", p)
 		}
-		parquetSource := fmt.Sprintf(SQLReadFromParquetTemplate, strings.Join(paths, ", "))
+		parquetSource := fmt.Sprintf("SELECT * FROM read_parquet([%s])", strings.Join(quotedFiles, ", "))
 		fromSources = append(fromSources, parquetSource)
 	}
 
 	if len(fromSources) == 0 {
-		return "", fmt.Errorf("no data sources for query")
+		return "", fmt.Errorf("no data sources available for query")
 	}
 
 	return fmt.Sprintf("(%s)", strings.Join(fromSources, " UNION ALL BY NAME ")), nil
 }
 
-// parseParquetFilename extracts the min and max unix timestamps from a parquet filename.
-// It expects the format "events_MIN_MAX.parquet".
-func parseParquetFilename(filename string) (int64, int64, bool) {
-	base := strings.TrimSuffix(filename, ".parquet")
-	parts := strings.Split(base, "_")
-	if len(parts) != 3 || parts[0] != "events" {
-		return 0, 0, false
-	}
-	minTs, errMin := strconv.ParseInt(parts[1], 10, 64)
-	maxTs, errMax := strconv.ParseInt(parts[2], 10, 64)
-	if errMin != nil || errMax != nil {
-		return 0, 0, false
-	}
-	return minTs, maxTs, true
+// Close is a no-op for the reader as it doesn't hold any long-lived connections.
+func (r *Reader) Close() {
+	log.Println("reader: closing.")
 }

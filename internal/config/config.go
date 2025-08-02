@@ -12,6 +12,8 @@ type Config struct {
 	ArchiveInterval   time.Duration
 	StorageLimitBytes int64
 	ListenPort        string
+	DBPath            string
+	ParquetPath       string
 }
 
 // Load reads configuration from environment variables and returns a new Config struct.
@@ -20,14 +22,19 @@ func Load() *Config {
 	archiveInterval := getEnvAsDuration("ARCHIVE_INTERVAL", 3*time.Hour)
 	storageLimitGB := getEnvAsInt64("STORAGE_LIMIT_GB", 10)
 	listenPort := getEnv("LISTEN_PORT", "8080")
+	dbPath := getEnv("DB_PATH", "data/writer.db")
+	parquetPath := getEnv("PARQUET_PATH", "data/parquet")
 
 	cfg := &Config{
 		ArchiveInterval:   archiveInterval,
 		StorageLimitBytes: storageLimitGB * 1024 * 1024 * 1024,
 		ListenPort:        listenPort,
+		DBPath:            dbPath,
+		ParquetPath:       parquetPath,
 	}
 
-	log.Printf("config: loaded configuration: ArchiveInterval=%v, StorageLimitGB=%d, ListenPort=%s", cfg.ArchiveInterval, storageLimitGB, cfg.ListenPort)
+	log.Printf("config: loaded configuration: ArchiveInterval=%v, StorageLimitGB=%d, ListenPort=%s, DBPath=%s, ParquetPath=%s",
+		cfg.ArchiveInterval, storageLimitGB, cfg.ListenPort, cfg.DBPath, cfg.ParquetPath)
 	return cfg
 }
 
