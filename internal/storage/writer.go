@@ -69,8 +69,6 @@ func NewWriter(dbPath string, dataDir string) (*Writer, error) {
 
 // AppendEvent sends a Kubernetes event to the batch-processing channel.
 func (w *Writer) AppendEvent(k8sEvent *corev1.Event) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.closed {
 		return fmt.Errorf("writer is closed")
 	}
@@ -78,8 +76,8 @@ func (w *Writer) AppendEvent(k8sEvent *corev1.Event) error {
 	select {
 	case w.eventCh <- k8sEvent:
 		return nil
-	default:
-		return fmt.Errorf("event channel is full")
+	case <-w.closeCh:
+		return fmt.Errorf("writer is closed")
 	}
 }
 

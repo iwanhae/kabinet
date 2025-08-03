@@ -65,7 +65,6 @@ func runWriter(ctx context.Context, wg *sync.WaitGroup, cfg *config.Config) {
 	if err != nil {
 		log.Fatalf("writer: failed to initialize storage writer: %v", err)
 	}
-	defer writer.Close()
 
 	wg.Add(1)
 	go func() {
@@ -73,6 +72,9 @@ func runWriter(ctx context.Context, wg *sync.WaitGroup, cfg *config.Config) {
 		log.Println("writer: starting data lifecycle manager...")
 		writer.LifecycleManager(ctx, cfg.ArchiveInterval, cfg.StorageLimitBytes)
 		log.Println("writer: data lifecycle manager finished")
+		log.Println("writer: closing writer...")
+		writer.Close()
+		log.Println("writer: writer closed")
 	}()
 
 	wg.Add(1)
@@ -89,18 +91,21 @@ func runReader(ctx context.Context, wg *sync.WaitGroup, cfg *config.Config) {
 	if err != nil {
 		log.Fatalf("reader: failed to initialize storage reader: %v", err)
 	}
-	defer reader.Close()
 
 	// The API server only needs a reader in this mode.
 	apiServer := api.New(reader, nil, cfg.ListenPort, distFS)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+
 		log.Printf("reader: starting API server on port %s...", cfg.ListenPort)
 		if err := apiServer.Start(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("reader: API server failed: %v", err)
 		}
 		log.Println("reader: API server closed")
+		log.Println("reader: closing reader...")
+		reader.Close()
+		log.Println("reader: reader closed")
 	}()
 
 	// Graceful shutdown for the API server
@@ -117,13 +122,11 @@ func runAllInOne(ctx context.Context, wg *sync.WaitGroup, cfg *config.Config) {
 	if err != nil {
 		log.Fatalf("main: failed to initialize storage writer: %v", err)
 	}
-	defer writer.Close()
 
 	reader, err := storage.NewReader(cfg.DBPath, cfg.ParquetPath)
 	if err != nil {
 		log.Fatalf("main: failed to initialize storage reader: %v", err)
 	}
-	defer reader.Close()
 
 	apiServer := api.New(reader, writer, cfg.ListenPort, distFS)
 	wg.Add(1)
@@ -142,6 +145,9 @@ func runAllInOne(ctx context.Context, wg *sync.WaitGroup, cfg *config.Config) {
 		log.Println("main: starting data lifecycle manager...")
 		writer.LifecycleManager(ctx, cfg.ArchiveInterval, cfg.StorageLimitBytes)
 		log.Println("main: data lifecycle manager finished")
+		log.Println("main: closing writer...")
+		writer.Close()
+		log.Println("main: writer closed")
 	}()
 
 	wg.Add(1)
@@ -159,6 +165,9 @@ func runAllInOne(ctx context.Context, wg *sync.WaitGroup, cfg *config.Config) {
 	if err := apiServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("main: error during API server shutdown: %v", err)
 	}
+	log.Println("main: closing reader...")
+	reader.Close()
+	log.Println("main: reader closed")
 }
 
 func runCollector(ctx context.Context, writer *storage.Writer) {
