@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -28,11 +29,132 @@ func (s *Storage) LifecycleManager(ctx context.Context, interval time.Duration, 
 			if err := s.EnforceRetention(limitBytes); err != nil {
 				log.Printf("storage: error during retention enforcement: %v", err)
 			}
+			if err := s.CompactParquetFiles(ctx, 128*1024*1024); err != nil {
+				log.Printf("storage: error during parquet file compaction: %v", err)
+			}
 		case <-ctx.Done():
 			log.Println("storage: stopping data lifecycle manager.")
 			return
 		}
 	}
+}
+
+func (s *Storage) CompactParquetFiles(ctx context.Context, compactThresholdBytes int64) error {
+	log.Println("storage: starting parquet file compaction process...")
+
+	files, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to read data directory: %w", err)
+	}
+
+	var parquetFiles []os.DirEntry
+	for _, file := range files {
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".parquet") {
+			parquetFiles = append(parquetFiles, file)
+		}
+	}
+
+	if len(parquetFiles) < 2 {
+		log.Println("storage: not enough parquet files to consider compaction.")
+		return nil
+	}
+
+	// Sort by timestamp in filename, oldest first.
+	sort.Slice(parquetFiles, func(i, j int) bool {
+		tsI := extractTimestampFromName(parquetFiles[i].Name())
+		tsJ := extractTimestampFromName(parquetFiles[j].Name())
+		if tsI == tsJ {
+			return parquetFiles[i].Name() < parquetFiles[j].Name()
+		}
+		return tsI < tsJ
+	})
+
+	var batchToMerge []os.DirEntry
+	var currentBatchSize int64
+
+	for _, file := range parquetFiles {
+		info, err := file.Info()
+		if err != nil {
+			log.Printf("storage: could not get file info for %s, skipping: %v", file.Name(), err)
+			continue
+		}
+
+		if info.Size() < compactThresholdBytes {
+			batchToMerge = append(batchToMerge, file)
+			currentBatchSize += info.Size()
+		} else {
+			// Current file is large, so we process any batch we've collected so far
+			if len(batchToMerge) > 1 && currentBatchSize > compactThresholdBytes {
+				if err := s.mergeFileBatch(ctx, batchToMerge); err != nil {
+					log.Printf("storage: failed to merge parquet batch: %v. will retry on next cycle.", err)
+				}
+			}
+			// Reset batch after processing or if it wasn't worth processing
+			batchToMerge = nil
+			currentBatchSize = 0
+		}
+	}
+
+	// Process the last batch if any exists
+	if len(batchToMerge) > 1 {
+		if err := s.mergeFileBatch(ctx, batchToMerge); err != nil {
+			log.Printf("storage: failed to merge final parquet batch: %v. will retry on next cycle.", err)
+		}
+	}
+
+	log.Println("storage: finished parquet file compaction process.")
+	return nil
+}
+
+func (s *Storage) mergeFileBatch(ctx context.Context, batch []os.DirEntry) error {
+	if len(batch) < 2 {
+		return fmt.Errorf("at least two files are required for a merge, got %d", len(batch))
+	}
+
+	// Prepare file paths for SQL query and deletion
+	filesToMergePaths := make([]string, len(batch))
+	for i, file := range batch {
+		filesToMergePaths[i] = filepath.Join(s.dataDir, file.Name())
+	}
+
+	// Create a new filename based on the time range of the batch
+	firstFileMinTs, _, ok1 := parseParquetFilename(batch[0].Name())
+	_, lastFileMaxTs, ok2 := parseParquetFilename(batch[len(batch)-1].Name())
+	if !ok1 || !ok2 {
+		return fmt.Errorf("could not parse timestamps from batch filenames")
+	}
+
+	newFileName := fmt.Sprintf("events_%d_%d.parquet", firstFileMinTs, lastFileMaxTs)
+	newFilePath := filepath.Join(s.dataDir, newFileName)
+	log.Printf("storage: merging %d files into %s", len(batch), newFileName)
+
+	// Build and execute the merge query
+	quotedFiles := make([]string, len(filesToMergePaths))
+	for i, p := range filesToMergePaths {
+		quotedFiles[i] = fmt.Sprintf("'%s'", p)
+	}
+	// Important: order by lastTimestamp to keep data sorted in the new parquet file.
+	copySQL := fmt.Sprintf(`COPY (SELECT * FROM read_parquet([%s]) ORDER BY lastTimestamp) TO '%s' (FORMAT 'parquet', COMPRESSION 'zstd');`,
+		strings.Join(quotedFiles, ", "), newFilePath)
+
+	if _, err := s.db.ExecContext(ctx, copySQL); err != nil {
+		// Cleanup partially written file if copy fails
+		os.Remove(newFilePath)
+		return fmt.Errorf("failed to execute merge copy: %w", err)
+	}
+
+	// Merge successful, now delete original files
+	log.Printf("storage: successfully created merged file %s. Deleting original files...", newFileName)
+	for _, path := range filesToMergePaths {
+		if err := os.Remove(path); err != nil {
+			// This is not ideal, as we now have duplicated data.
+			// Log this clearly for manual intervention.
+			log.Printf("storage: CRITICAL: failed to delete source file %s after merging. Manual intervention required.", path)
+		}
+	}
+
+	log.Printf("storage: finished merging batch into %s", newFileName)
+	return nil
 }
 
 // Archive archives the current kube_events table to parquet files
@@ -204,4 +326,72 @@ func (s *Storage) dataDirSize() (int64, error) {
 	}
 
 	return totalSize, nil
+}
+
+// extractTimestampFromName parses a parquet filename and returns its start timestamp (in Unix seconds)
+// for sorting purposes. It supports "events_MIN_MAX.parquet"
+func extractTimestampFromName(filename string) int64 {
+	minTs, _, ok := parseParquetFilename(filename)
+	if !ok {
+		log.Printf("storage: could not extract timestamp from filename: %s", filename)
+		return 0 // Place unparsable files at the beginning, though they are unlikely to be sorted correctly.
+	}
+	return minTs
+}
+
+// parseParquetFilename extracts the min and max unix timestamps from a parquet filename.
+// It returns minTs, maxTs, and a boolean indicating success.
+func parseParquetFilename(filename string) (int64, int64, bool) {
+	base := strings.TrimSuffix(filename, ".parquet")
+	parts := strings.Split(base, "_")
+
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+
+	switch parts[0] {
+	case "events":
+		if len(parts) != 3 {
+			return 0, 0, false
+		}
+		minTs, errMin := strconv.ParseInt(parts[1], 10, 64)
+		maxTs, errMax := strconv.ParseInt(parts[2], 10, 64)
+		if errMin != nil || errMax != nil {
+			return 0, 0, false
+		}
+		return minTs, maxTs, true
+	case "kube":
+		if len(parts) == 4 && parts[1] == "events" && parts[2] == "archive" {
+			// Fallback filename format: kube_events_archive_<nanos>.parquet
+			nanoTs, err := strconv.ParseInt(parts[3], 10, 64)
+			if err != nil {
+				return 0, 0, false
+			}
+			ts := nanoTs / 1e9 // convert nano to unix seconds
+			return ts, ts, true
+		}
+	}
+	return 0, 0, false
+}
+
+func buildFromClause(relevantFiles []string, includeKubeEvents bool) (string, error) {
+	var fromSources []string
+	if includeKubeEvents {
+		fromSources = append(fromSources, "SELECT * FROM kube_events")
+	}
+
+	if len(relevantFiles) > 0 {
+		quotedFiles := make([]string, len(relevantFiles))
+		for i, p := range relevantFiles {
+			quotedFiles[i] = fmt.Sprintf("'%s'", p)
+		}
+		parquetSource := fmt.Sprintf("SELECT * FROM read_parquet([%s])", strings.Join(quotedFiles, ", "))
+		fromSources = append(fromSources, parquetSource)
+	}
+
+	if len(fromSources) == 0 {
+		return "", fmt.Errorf("no data sources for query")
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(fromSources, " UNION BY NAME ")), nil
 }
