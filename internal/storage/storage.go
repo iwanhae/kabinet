@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iwanhae/kube-event-analyzer/internal/utils"
 	_ "github.com/marcboeker/go-duckdb/v2"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -63,17 +64,47 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 	return s, nil
 }
 
-func (s *Storage) Stats() map[string]any {
+func (s *Storage) Stats(ctx context.Context) map[string]any {
+	errs := utils.MultiError{}
+
 	dataDirSize, err := s.dataDirSize()
 	if err != nil {
-		log.Printf("storage: error getting data directory size: %v", err)
+		errs.Add(fmt.Errorf("storage: error getting data directory size: %v", err))
 		dataDirSize = 0
 	}
+
+	statsTempFiles, err := func() ([]map[string]any, error) {
+		rows, err := s.db.QueryContext(ctx, "FROM duckdb_temporary_files();")
+		if err != nil {
+			return nil, fmt.Errorf("storage: error getting temporary files: %v", err)
+		}
+		defer rows.Close()
+		return serializeRows(rows)
+	}()
+	if err != nil {
+		errs.Add(err)
+	}
+
+	statsMemory, err := func() ([]map[string]any, error) {
+		rows, err := s.db.QueryContext(ctx, "SELECT * FROM duckdb_memory();")
+		if err != nil {
+			return nil, fmt.Errorf("storage: error getting memory usage: %v", err)
+		}
+		defer rows.Close()
+		return serializeRows(rows)
+	}()
+	if err != nil {
+		errs.Add(err)
+	}
+
 	return map[string]any{
-		"db_stats":      s.db.Stats(),
-		"event_channel": len(s.eventCh),
-		"data_dir":      s.dataDir,
-		"data_dir_size": dataDirSize,
+		"db_stats":          s.db.Stats(),
+		"event_channel":     len(s.eventCh),
+		"data_dir":          s.dataDir,
+		"data_dir_size":     dataDirSize,
+		"duckdb_temp_files": statsTempFiles,
+		"duckdb_memory":     statsMemory,
+		"errors":            errs,
 	}
 }
 
@@ -338,7 +369,7 @@ type RangeQueryResult struct {
 
 // RangeQuery executes a range query against the storage.
 // It executes the query by substituting the $events placeholder with the appropriate FROM clause.
-func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.Time) (*sql.Rows, *RangeQueryResult, error) {
+func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.Time) ([]map[string]any, *RangeQueryResult, error) {
 	if ctx.Err() != nil {
 		return nil, nil, fmt.Errorf("failed fast: %w", ctx.Err())
 	}
@@ -414,7 +445,11 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 	if err != nil {
 		return nil, nil, err
 	}
-	return rows, &RangeQueryResult{
+	results, err := serializeRows(rows)
+	if err != nil {
+		return nil, nil, err
+	}
+	return results, &RangeQueryResult{
 		Duration: time.Since(now),
 		Files:    relevantFiles,
 	}, nil
@@ -577,4 +612,42 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 	log.Printf("storage: inserted %d events into kube_events", len(k8sEvents))
 
 	return nil
+}
+
+func serializeRows(rows *sql.Rows) ([]map[string]any, error) {
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get columns: %w", err)
+	}
+
+	var results []map[string]any
+	for rows.Next() {
+		rowValues := make([]any, len(columns))
+		rowPointers := make([]any, len(columns))
+		for i := range rowValues {
+			rowPointers[i] = &rowValues[i]
+		}
+
+		if err := rows.Scan(rowPointers...); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		rowData := make(map[string]any, len(columns))
+		for i, colName := range columns {
+			val := rowValues[i]
+
+			// To keep JSON clean, we handle byte slices (like DuckDB structs)
+			if b, ok := val.([]byte); ok {
+				rowData[colName] = string(b)
+			} else {
+				rowData[colName] = val
+			}
+		}
+		results = append(results, rowData)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+	return results, nil
 }
