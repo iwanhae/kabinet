@@ -65,7 +65,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		log.Println("main: starting data lifecycle manager...")
-		storage.LifecycleManager(ctx, cfg.ArchiveInterval, cfg.StorageLimitBytes)
+		storage.LifecycleManager(ctx, cfg.ArchiveTableSizeMB, cfg.StorageLimitBytes)
 		log.Println("main: data lifecycle manager finished")
 	}()
 

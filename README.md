@@ -16,7 +16,7 @@ Kube Event Analyzer addresses these problems with a streamlined, all-in-one appr
 
 - **Real-Time Collection**: Uses the Kubernetes `WATCH` API to subscribe to events directly, ensuring minimal latency.
 - **Efficient Storage**: Events are initially stored in a fast, file-backed DuckDB database for durable ingestion. They are then periodically archived into compressed Parquet files (`zstd` compression) for long-term storage, offering a great balance between performance and disk space.
-- **Automated Data Lifecycle**: The tool automatically manages data retention. It archives recent events into Parquet files at a configurable interval and prunes the oldest files when a predefined storage limit is reached.
+- **Automated Data Lifecycle**: The tool automatically manages data retention. It archives the DuckDB table to a Parquet file when it reaches a configurable size (e.g., 512MB). It also periodically compacts smaller Parquet files and prunes the oldest files when a predefined total storage limit is reached.
 - **Simplified Architecture**: Runs as a single binary, containing both the event collector and API server for querying data. This eliminates the need for external databases or complex pipelines.
 - **Powerful Analytics**: By leveraging DuckDB, it can query both the real-time data from its local database file and the historical Parquet files simultaneously, providing a unified view for analysis.
 - **Rich Web Interface**: Features a modern, responsive React-based web UI with real-time dashboards, advanced query builder, and interactive visualizations.
@@ -26,7 +26,6 @@ Kube Event Analyzer addresses these problems with a streamlined, all-in-one appr
 The project is a single Go binary that consists of three main components:
 
 1.  **Collector & Storage Manager**: A background service that:
-
     - Connects to the Kubernetes API server.
     - Uses the `client-go` informer framework to reliably watch for cluster events, automatically resuming from the last known `resourceVersion`.
     - Appends incoming events to a `kube_events` table in a local DuckDB database file.
@@ -50,24 +49,24 @@ The project is a single Go binary that consists of three main components:
 ```mermaid
 graph LR
     A["K8s API Server"] -- "Events" --> B["Event Collector"]
-    
+
     subgraph "Kube Event Analyzer"
         subgraph "API & Web Server"
             H["HTTP Server :8080"] --> I["Query Endpoint"]
             H --> J["Static Web Files"]
             I --> K["DuckDB Query Engine"]
         end
-        
+
         subgraph "Data Lifecycle Manager"
-            D["Archive Timer<br/>(3h interval)"] --> E["Archive Process"]
+            D["Every Minute"] --> E["Archive Process"]
         end
 				B --"INSERT"--> C["DuckDB Table"]
-				E --"Rotate Table"--> C
-        E --"Save & Delete"--> F["Parquet Files<br/>(ZSTD compressed)"]
+				E --"Archive Table"--> C
+        E --"Save & Compact & Delete"--> F["Parquet Files<br/>(ZSTD compressed)"]
         K --"SELECT"--> C
         K --"SELECT"--> F
     end
-    
+
     L["Users"] --> M["React Web UI<br/>(Analytics & Discover)"]
     M --> H
 ```
@@ -112,29 +111,31 @@ graph LR
 ### Development Setup
 
 1.  **Install dependencies**:
-    
+
     ```bash
     # Install Go dependencies
     go mod download
-    
+
     # Install frontend dependencies
     npm install
     ```
-    
+
 2.  **Run in development mode**:
+
     ```bash
     # Terminal 1: Start the frontend dev server
     npm run dev
-    
+
     # Terminal 2: Start the Go backend
     go run main.go
     ```
-    
+
     - Frontend will be available at `http://localhost:5173`
     - Backend API will be available at `http://localhost:8080`
     - The dev server proxies API calls to the backend
 
 3.  **Build for production**:
+
     ```bash
     # Build the frontend
     npm run build
@@ -175,10 +176,12 @@ Once running, open your browser to `http://localhost:8080` to access:
 ## Key Features
 
 ### **High Reliability**
+
 - Reliably watches Kubernetes events using the `client-go` informer framework, which automatically handles reconnections and resynchronization.
 - Features graceful shutdown to ensure all in-flight events are processed and saved before the application terminates.
 
 ### **Rich Analytics Dashboard**
+
 - **Event Timeline Charts**: Interactive visualizations of event patterns over time
 - **Top Noisy Namespaces**: Identify the most active namespaces in your cluster
 - **Warning Analysis**: Breakdown of warning reasons and their frequencies
@@ -186,6 +189,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 - **Metrics Overview**: Key statistics and health indicators
 
 ### **Advanced Query Interface**
+
 - **SQL Query Builder**: Write custom SQL queries with full DuckDB syntax support
 - **Time Range Controls**: Flexible date/time pickers with preset quick ranges
 - **Interactive Results**: Click on events to view detailed information in a drawer
@@ -193,12 +197,14 @@ Once running, open your browser to `http://localhost:8080` to access:
 - **Real-time Filtering**: Dynamic event filtering and searching
 
 ### **Intelligent Storage Management**
+
 - **Hybrid Storage**: A fast, file-backed DuckDB instance for recent data, compressed Parquet for archives
 - **Automatic Archiving**: Configurable intervals for data lifecycle management (default: 3 hours)
 - **Space Management**: Automatic cleanup when storage limits are reached (default: 10GB)
 - **ZSTD Compression**: Efficient compression for long-term storage (Roughtly 10x smaller than just storing the raw events)
 
 ### **Developer-Friendly**
+
 - **Modern Tech Stack**: React, TypeScript, Material-UI, SWR for data fetching
 - **Comprehensive Guides**: Detailed development documentation for both frontend and backend
 - **Docker Support**: Multi-stage builds for easy deployment
@@ -211,6 +217,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 The primary API endpoint accepts SQL queries with time range parameters. The `$events` table represents all Kubernetes events within the specified time range, combining both real-time in-memory data and historical Parquet files.
 
 **Request Format:**
+
 ```json
 {
   "query": "SQL_QUERY",
@@ -220,6 +227,7 @@ The primary API endpoint accepts SQL queries with time range parameters. The `$e
 ```
 
 **Response Format:**
+
 ```json
 {
   "results": [...],
@@ -242,14 +250,15 @@ curl -X POST http://localhost:8080/query \
 ```
 
 **Response:**
+
 ```json
 {
   "results": [
-    {"reason": "FailedScheduling", "count": 717},
-    {"reason": "Scheduled", "count": 629},
-    {"reason": "Pulling", "count": 564},
-    {"reason": "Pulled", "count": 550},
-    {"reason": "Started", "count": 445}
+    { "reason": "FailedScheduling", "count": 717 },
+    { "reason": "Scheduled", "count": 629 },
+    { "reason": "Pulling", "count": 564 },
+    { "reason": "Pulled", "count": 550 },
+    { "reason": "Started", "count": 445 }
   ],
   "duration_ms": 23,
   "files": ["events_2025-01-01_12-00-00.parquet"],
@@ -269,11 +278,11 @@ For detailed query examples and advanced usage, see `DEVELOPMENT_QUERY_GUIDE.md`
 
 The application can be configured using the following environment variables:
 
-| Variable            | Description                                               | Default      | Example    |
-| ------------------- | --------------------------------------------------------- | ------------ | ---------- |
-| `ARCHIVE_INTERVAL`  | The time interval for archiving events to Parquet files.  | `3h`         | `1h30m`    |
-| `STORAGE_LIMIT_GB`  | The maximum size of the data directory in gigabytes.      | `10`         | `20`       |
-| `LISTEN_PORT`       | The port on which the API server will listen.             | `8080`       | `8888`     |
+| Variable                | Description                                                                      | Default | Example |
+| ----------------------- | -------------------------------------------------------------------------------- | ------- | ------- |
+| `ARCHIVE_TABLE_SIZE_MB` | The size threshold in megabytes for the `kube_events` table to trigger archival. | `512`   | `1024`  |
+| `STORAGE_LIMIT_GB`      | The maximum total size of the data directory in gigabytes.                       | `10`    | `20`    |
+| `LISTEN_PORT`           | The port on which the API server will listen.                                    | `8080`  | `8888`  |
 
 ## Development
 
@@ -287,11 +296,13 @@ This project welcomes contributions! Here are some helpful resources:
 ### Tech Stack Summary
 
 **Backend (Go):**
+
 - Kubernetes client-go for API interactions
 - DuckDB for high-performance analytics
 - Standard HTTP server with embedded static files
 
 **Frontend (React/TypeScript):**
+
 - Vite for fast development and building
 - Material-UI for consistent, modern UI components
 - SWR for efficient data fetching and caching
