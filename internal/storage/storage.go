@@ -19,11 +19,7 @@ import (
 )
 
 type Storage struct {
-	writerMu sync.Mutex
-	writer   *sql.DB
-
-	readerMu sync.Mutex
-	reader   *sql.DB
+	db *sql.DB
 
 	dbPath  string
 	dataDir string
@@ -43,37 +39,20 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 	// This is duckdb's bug that failed to recover from a crash.
 	os.Remove(path.Join(dataDir, "events.db.wal"))
 
-	writer, err := sql.Open("duckdb", dbPath+"?access_mode=READ_WRITE&threads=1")
+	db, err := sql.Open("duckdb", dbPath+"?access_mode=READ_WRITE")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create writer: %w", err)
+		return nil, fmt.Errorf("failed to create database connection: %w", err)
 	}
-	if _, err := writer.Exec(createTableSQL); err != nil {
+	if _, err := db.Exec(createTableSQL); err != nil {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
-	reader, err := sql.Open("duckdb", ":memory:?preserve_insertion_order=false")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create reader: %w", err)
-	}
-
-	// test attach
-	if _, err := reader.Exec(fmt.Sprintf("ATTACH '%s' AS events (READ_ONLY);", dbPath)); err != nil {
-		return nil, fmt.Errorf("failed to attach database: %w", err)
-	}
-	// test detach
-	if _, err := reader.Exec("DETACH events"); err != nil {
-		return nil, fmt.Errorf("failed to detach database: %w", err)
-	}
-
 	s := &Storage{
-		writerMu: sync.Mutex{},
-		writer:   writer,
-		readerMu: sync.Mutex{},
-		reader:   reader,
-		dbPath:   dbPath,
-		dataDir:  dataDir,
-		eventCh:  make(chan *corev1.Event, 10000),
-		wg:       &sync.WaitGroup{},
+		db:      db,
+		dbPath:  dbPath,
+		dataDir: dataDir,
+		eventCh: make(chan *corev1.Event, 2000),
+		wg:      &sync.WaitGroup{},
 	}
 	s.wg.Add(1)
 	go func() {
@@ -91,8 +70,7 @@ func (s *Storage) Stats() map[string]any {
 		dataDirSize = 0
 	}
 	return map[string]any{
-		"writer_stats":  s.writer.Stats(),
-		"reader_stats":  s.reader.Stats(),
+		"db_stats":      s.db.Stats(),
 		"event_channel": len(s.eventCh),
 		"data_dir":      s.dataDir,
 		"data_dir_size": dataDirSize,
@@ -106,11 +84,8 @@ func (s *Storage) Wait() {
 
 func (s *Storage) Close() {
 	log.Println("storage: closing storage...")
-	if err := s.reader.Close(); err != nil {
-		log.Printf("storage: error closing reader: %v", err)
-	}
-	if err := s.writer.Close(); err != nil {
-		log.Printf("storage: error closing writer: %v", err)
+	if err := s.db.Close(); err != nil {
+		log.Printf("storage: error closing database: %v", err)
 	}
 	log.Println("storage: closed successfully")
 }
@@ -140,7 +115,7 @@ func (s *Storage) LifecycleManager(ctx context.Context, interval time.Duration, 
 func (s *Storage) Archive(ctx context.Context) error {
 
 	var count int
-	if err := s.writer.QueryRowContext(ctx, "SELECT COUNT(*) FROM kube_events").Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM kube_events").Scan(&count); err != nil {
 		return fmt.Errorf("failed to count rows in kube_events: %w", err)
 	}
 
@@ -153,9 +128,7 @@ func (s *Storage) Archive(ctx context.Context) error {
 	log.Printf("storage: archiving %d events to table %s", count, archiveTableName)
 
 	err := func() error {
-		s.writerMu.Lock()
-		defer s.writerMu.Unlock()
-		tx, err := s.writer.Begin()
+		tx, err := s.db.Begin()
 		if err != nil {
 			return fmt.Errorf("failed to begin transaction: %w", err)
 		}
@@ -165,7 +138,7 @@ func (s *Storage) Archive(ctx context.Context) error {
 			return fmt.Errorf("failed to drop index before archival: %w", err)
 		}
 
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE events.kube_events RENAME TO %s", archiveTableName)); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE kube_events RENAME TO %s", archiveTableName)); err != nil {
 			return fmt.Errorf("failed to rename table: %w", err)
 		}
 
@@ -187,7 +160,7 @@ func (s *Storage) Archive(ctx context.Context) error {
 
 	var minTime, maxTime time.Time
 	query := fmt.Sprintf("SELECT MIN(lastTimestamp), MAX(lastTimestamp) FROM %s", archiveTableName)
-	if err := s.writer.QueryRowContext(ctx, query).Scan(&minTime, &maxTime); err != nil {
+	if err := s.db.QueryRowContext(ctx, query).Scan(&minTime, &maxTime); err != nil {
 		log.Printf("storage: failed to get min/max timestamps for table %s: %v. proceeding with fallback naming", archiveTableName, err)
 	}
 
@@ -201,7 +174,7 @@ func (s *Storage) processArchivedTable(ctx context.Context, tableName string, mi
 
 	parquetFileName := filepath.Join(s.dataDir, fmt.Sprintf("events_%d_%d.parquet", minTime.Unix(), maxTime.Unix()))
 
-	tx, err := s.writer.BeginTx(ctx, &sql.TxOptions{})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		log.Printf("storage: archiving: error getting connection for background processing: %v", err)
 		return
@@ -366,21 +339,9 @@ type RangeQueryResult struct {
 // RangeQuery executes a range query against the storage.
 // It executes the query by substituting the $events placeholder with the appropriate FROM clause.
 func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.Time) (*sql.Rows, *RangeQueryResult, error) {
-	s.readerMu.Lock()
-	defer s.readerMu.Unlock()
 	if ctx.Err() != nil {
 		return nil, nil, fmt.Errorf("failed fast: %w", ctx.Err())
 	}
-	// attach
-	if _, err := s.reader.Exec(fmt.Sprintf("ATTACH '%s' AS events (READ_ONLY);", s.dbPath)); err != nil {
-		return nil, nil, fmt.Errorf("failed to attach database: %w", err)
-	}
-	// detach
-	defer func() {
-		if _, err := s.reader.Exec("DETACH events"); err != nil {
-			log.Printf("storage: error detaching database: %v", err)
-		}
-	}()
 
 	files, err := os.ReadDir(s.dataDir)
 	if err != nil {
@@ -449,7 +410,7 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 	log.Printf("storage: executing range query: %s", finalQuery)
 
 	now := time.Now()
-	rows, err := s.reader.QueryContext(ctx, finalQuery)
+	rows, err := s.db.QueryContext(ctx, finalQuery)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -462,7 +423,7 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 func buildFromClause(relevantFiles []string, includeKubeEvents bool) (string, error) {
 	var fromSources []string
 	if includeKubeEvents {
-		fromSources = append(fromSources, "SELECT * FROM events.kube_events")
+		fromSources = append(fromSources, "SELECT * FROM kube_events")
 	}
 
 	if len(relevantFiles) > 0 {
@@ -533,9 +494,7 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 	}
 
 	// BEGIN TRANSACTION
-	s.writerMu.Lock()
-	defer s.writerMu.Unlock()
-	tx, err := s.writer.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err) // TODO: retry?
 	}
@@ -604,7 +563,7 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 			k8sEvent.ReportingInstance,
 		}
 		placeholder := "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-		query := fmt.Sprintf("INSERT OR IGNORE INTO events.kube_events VALUES %s", placeholder)
+		query := fmt.Sprintf("INSERT OR IGNORE INTO kube_events VALUES %s", placeholder)
 		_, err := tx.Exec(query, args...)
 		if err != nil {
 			return fmt.Errorf("failed to batch insert events: %w", err)
