@@ -420,25 +420,3 @@ func parseParquetFilename(filename string) (int64, int64, bool) {
 	}
 	return 0, 0, false
 }
-
-func buildFromClause(relevantFiles []string, includeKubeEvents bool) (string, error) {
-	var fromSources []string
-	if includeKubeEvents {
-		fromSources = append(fromSources, "SELECT * FROM kube_events")
-	}
-
-	if len(relevantFiles) > 0 {
-		quotedFiles := make([]string, len(relevantFiles))
-		for i, p := range relevantFiles {
-			quotedFiles[i] = fmt.Sprintf("'%s'", p)
-		}
-		parquetSource := fmt.Sprintf("SELECT * FROM read_parquet([%s])", strings.Join(quotedFiles, ", "))
-		fromSources = append(fromSources, parquetSource)
-	}
-
-	if len(fromSources) == 0 {
-		return "", fmt.Errorf("no data sources for query")
-	}
-
-	return fmt.Sprintf("(%s)", strings.Join(fromSources, " UNION BY NAME ")), nil
-}

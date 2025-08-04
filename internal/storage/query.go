@@ -74,7 +74,7 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 		relevantFilePaths[i] = f.Path
 	}
 
-	fromClause, err := buildFromClause(relevantFilePaths, includeKubeEvents)
+	fromClause, err := buildFromClause(relevantFilePaths, includeKubeEvents, start, end)
 	if err != nil {
 		log.Println("storage: query time range resulted in no data sources. returning empty result.")
 		return nil, nil, fmt.Errorf("query time range resulted in no data sources")
@@ -96,4 +96,26 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 		Duration: time.Since(now),
 		Files:    relevantFiles,
 	}, nil
+}
+
+func buildFromClause(relevantFiles []string, includeKubeEvents bool, from, to time.Time) (string, error) {
+	var fromSources []string
+	if includeKubeEvents {
+		fromSources = append(fromSources, fmt.Sprintf("SELECT * FROM kube_events WHERE lastTimestamp BETWEEN '%s' AND '%s'", from.Format(time.RFC3339), to.Format(time.RFC3339)))
+	}
+
+	if len(relevantFiles) > 0 {
+		quotedFiles := make([]string, len(relevantFiles))
+		for i, p := range relevantFiles {
+			quotedFiles[i] = fmt.Sprintf("'%s'", p)
+		}
+		parquetSource := fmt.Sprintf("SELECT * FROM read_parquet([%s]) WHERE lastTimestamp BETWEEN '%s' AND '%s'", strings.Join(quotedFiles, ", "), from.Format(time.RFC3339), to.Format(time.RFC3339))
+		fromSources = append(fromSources, parquetSource)
+	}
+
+	if len(fromSources) == 0 {
+		return "", fmt.Errorf("no data sources for query")
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(fromSources, " UNION BY NAME ")), nil
 }
