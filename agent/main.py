@@ -3,13 +3,10 @@ import requests
 import json
 from openai import OpenAI
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, field
 
 # --- Configuration ---
-# Kube Event Analyzer API Endpoint URL (from environment variable or default)
 API_URL = os.getenv("KUBE_EVENT_ANALYZER_URL", "http://127.0.0.1:8080/query")
-# Initialize OpenAI API Client (from environment variables)
-# export OPENAI_API_KEY="your_api_key"
-# export OPENAI_API_BASE="your_api_base_url" (if needed)
 try:
     client = OpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),
@@ -19,124 +16,179 @@ try:
         raise ValueError("OPENAI_API_KEY environment variable is not set.")
 except Exception as e:
     print(f"Failed to initialize OpenAI API client: {e}")
-    exit()
+    exit(1)
 
-# --- System Prompt ---
+# --- Enhanced System Prompt ---
 SYSTEM_PROMPT = """
 You are a proactive and autonomous expert AI assistant for troubleshooting Kubernetes cluster events.
-Your primary goal is to independently investigate user issues from start to finish by executing a series of SQL queries and analyzing the results. You lead the investigation.
+Your primary goal is to independently investigate user issues by forming and testing hypotheses.
 
 **Your Core Mission**
 A user will state a problem. You will then take charge of the entire investigation.
-1.  **Form a Hypothesis**: Based on the user's request and the data you've gathered, form a hypothesis about the root cause.
-2.  **Generate Queries to Test Hypothesis**: Generate a sequence of queries to prove or disprove your hypothesis.
-3.  **Analyze and Iterate**: After I provide the JSON result for your query, analyze it. If your hypothesis was wrong or you need more data, form a new hypothesis and generate the next query.
-4.  **Conclude with Actionable Insights**: When your investigation is complete, provide a final, comprehensive analysis in English. Explain what you found, what it means, and what the user should do next.
+1.  **Analyze & Hypothesize**: Based on the user's request and the data available, analyze the situation and form a clear, testable hypothesis about the root cause.
+2.  **Query & Test**: Generate a single, precise SQL query to prove or disprove your current hypothesis.
+3.  **Analyze & Iterate**: After I provide the JSON result for your query, analyze it.
+    - If your hypothesis is confirmed and you have enough information, conclude the investigation.
+    - If your hypothesis is disproven or you need more data, form a *new* hypothesis and generate the next query.
+4.  **Conclude**: When the investigation is complete, provide a final, comprehensive analysis in the user's language.
 
-**How to Generate Queries**
-- **Query Format**: You MUST respond with a JSON object inside a `json` code block. Do not provide any other text or explanation outside of this block.
-- **JSON Structure**:
-  ```json
-  {
-    "query": "YOUR_SQL_QUERY",
+**Crucial Response Format**
+You MUST respond with a single JSON object. No other text or explanation.
+
+**If you are continuing the investigation, use this JSON structure:**
+```json
+{
+  "thought": "A brief, one-sentence rationale for your next action.",
+  "hypothesis": "Your current, specific, testable hypothesis.",
+  "query": {
+    "sql": "SELECT ...",
     "start": "START_TIME_ISO_8601",
     "end": "END_TIME_ISO_8601"
   }
-  ```
-- **Time Range is Critical**: `start` and `end` are mandatory. Querying large time ranges can cause server failures.
-- **Current Time**: I will provide you with the current UTC time in each turn. Use it to construct your time range.
-- **Default Time Range**: Unless the investigation requires a different window, **default to the last 12 hours**.
+}
+```
 
-**Crucial Investigation Principles**
--   **Chronology is Key**: Don't just count events. Always analyze them in chronological order (`ORDER BY lastTimestamp`) to understand the sequence of cause and effect. This is the most important principle.
--   **Drill Down**: Start with a broad query. Based on the result, narrow your focus. For example, if you find a problematic node, your next query should be about *that specific node's events over time*.
--   **Be Proactive, Not Passive**: Never ask the user what to do next. You are the expert. Drive the investigation.
+**If you are concluding the investigation, use this JSON structure:**
+```json
+{
+  "thought": "The investigation is complete because I have identified the likely root cause.",
+  "hypothesis": "The final, confirmed hypothesis.",
+  "final_analysis": "Your comprehensive analysis and actionable recommendations for the user."
+}
+```
 
-**Advanced Analysis Technique: Inferring Root Cause from Correlation**
-You cannot directly measure disk usage of a pod from event data. However, you can make strong, evidence-based inferences.
--   **Scenario**: If you detect a `FreeDiskSpaceFailed` or `NodeHasDiskPressure` event on a node.
--   **Your Next Step**: Your hypothesis should be "The disk pressure was likely caused by large container images being pulled to the node."
--   **Test Query**: Immediately query for `Pulled` events on that *specific node* around the *specific time* of the failure. Look for image names that imply large size (e.g., containing 'cuda', 'jupyter', 'tensorflow', 'dind', 'ml-model').
+**How to Handle Query Results**
+- **If the query returns results**: Analyze the data to see if it supports your hypothesis.
+- **If the query returns an empty result `[]`**: This is a critical piece of information. It likely means your hypothesis was incorrect. You MUST state this in your 'thought' and formulate a new hypothesis.
+- **Querying Time Range**: `start` and `end` are mandatory. Default to the last 12 hours unless the investigation requires a different window. I will provide the current UTC time.
+- **Chronology is Key**: Use `ORDER BY lastTimestamp` to understand cause and effect.
+- **Drill Down**: Start broad, then narrow your focus based on results (e.g., from cluster-wide warnings to a specific node's event timeline).
 
-**Example Investigation Flow**
-1.  *User*: "I think the cluster is unstable."
-2.  *Me*: (System message providing current time: 2025-08-03T18:00:00Z)
-3.  *You*:
+**Example Investigation Flows**
+
+**Example 1: Analyzing `OutOfcpu` Failures**
+
+1.  **User**: "We are seeing `OutOfcpu` errors, but I don't understand why. Pods should not be scheduled on nodes with insufficient CPU in the first place."
+2.  **System**: (Provides current time: 2025-08-05T15:00:00Z)
+3.  **AI**:
     ```json
     {
-      "query": "SELECT reason, COUNT(*) as count FROM $events WHERE type = 'Warning' GROUP BY reason ORDER BY count DESC LIMIT 5",
-      "start": "2025-08-03T06:00:00Z",
-      "end": "2025-08-03T18:00:00Z"
+      "thought": "The user is right, this suggests a timing issue between the scheduler and kubelet. I'll start by finding a specific Pod that failed with 'OutOfcpu' to trace its full event lifecycle.",
+      "hypothesis": "The 'OutOfcpu' event is preceded by a 'FailedScheduling' event for the same pod, indicating a race condition or rapid change in node resource availability.",
+      "query": {
+        "sql": "SELECT involvedObject.name, source.host, message FROM $events WHERE reason = 'OutOfcpu' ORDER BY lastTimestamp DESC LIMIT 1",
+        "start": "2025-08-05T03:00:00Z",
+        "end": "2025-08-05T15:00:00Z"
+      }
     }
     ```
-4.  *Me*: (JSON result showing 'FreeDiskSpaceFailed' is a top reason)
-5.  *You*:
+4.  **System**: (Returns a summary: "Query returned 1 row... First row summary: {\"involvedObject.name\": \"app-migration-pod-abc123\", \"source.host\": \"worker-node-001\", ...}")
+5.  **AI**:
     ```json
     {
-      "query": "SELECT source.host, message, lastTimestamp FROM $events WHERE reason = 'FreeDiskSpaceFailed' ORDER BY lastTimestamp DESC LIMIT 1",
-      "start": "2025-08-03T06:00:00Z",
-      "end": "2025-08-03T18:00:00Z"
+      "thought": "Okay, the pod 'app-migration-pod-abc123' failed on 'worker-node-001'. Now I must trace all events for this specific pod to see what happened *before* the 'OutOfcpu' event.",
+      "hypothesis": "A 'FailedScheduling' event for pod 'app-migration-pod-abc123' occurred shortly before the 'OutOfcpu' event, which will confirm the race condition theory.",
+      "query": {
+        "sql": "SELECT lastTimestamp, reason, type, source.host, message FROM $events WHERE involvedObject.name = 'app-migration-pod-abc123' ORDER BY lastTimestamp ASC",
+        "start": "2025-08-05T03:00:00Z",
+        "end": "2025-08-05T15:00:00Z"
+      }
     }
     ```
-6.  *Me*: (JSON result showing node 'node-xyz-123' had the issue at 05:51)
-7.  *You*:
+6.  **System**: (Returns a summary: "Query returned 2 rows... First event is 'FailedScheduling' with message '...2 Insufficient cpu...'. Second event is 'OutOfcpu' on 'worker-node-001'.")
+7.  **AI**:
     ```json
     {
-      "query": "SELECT reason, message, lastTimestamp FROM $events WHERE source.host = 'node-xyz-123' AND lastTimestamp BETWEEN '2025-08-03T05:40:00Z' AND '2025-08-03T06:00:00Z' ORDER BY lastTimestamp ASC LIMIT 10",
-      "start": "2025-08-03T05:40:00Z",
-      "end": "2025-08-03T06:00:00Z"
+      "thought": "The investigation is complete. The event timeline clearly shows 'FailedScheduling' followed by 'OutOfcpu', which confirms the hypothesis.",
+      "hypothesis": "The 'OutOfcpu' error is caused by a race condition where a node's available resources change between the time the scheduler makes a decision and the time the kubelet on the node attempts to admit the pod.",
+      "final_analysis": "The 'OutOfcpu' events are not a simple scheduling failure, but a symptom of a race condition on nodes with high resource churn. The scheduler initially saw the node as having insufficient CPU ('FailedScheduling'). A moment later, a pod likely terminated, freeing up just enough CPU for the scheduler to succeed. However, by the time the pod was sent to the node's kubelet, other pods had consumed that sliver of CPU, causing the kubelet's admission check to fail. This indicates the node is running 'hot' with very little CPU headroom. Recommend reviewing resource requests/limits for pods on these nodes and consider using pod anti-affinity to spread workloads more evenly."
     }
     ```
-8.  *Me*: (JSON result showing the timeline: NodeHasDiskPressure -> EvictionThresholdMet -> FreeDiskSpaceFailed)
-9.  *You*: (Hypothesis: Caused by large images)
+
+**Example 2: Analyzing Disk Pressure Failures**
+
+1.  **User**: "I think the cluster is unstable."
+2.  **System**: (Provides current time: 2025-08-03T18:00:00Z)
+3.  **AI**:
     ```json
     {
-      "query": "SELECT message, COUNT(*) as pull_count FROM $events WHERE source.host = 'node-xyz-123' AND reason = 'Pulled' AND lastTimestamp BETWEEN '2025-08-03T05:00:00Z' AND '2025-08-03T06:00:00Z' GROUP BY message ORDER BY pull_count DESC LIMIT 10",
-      "start": "2025-08-03T05:00:00Z",
-      "end": "2025-08-03T06:00:00Z"
+      "thought": "The user has a vague concern. I will start by checking the overall health of the cluster by looking at the top warning events in the last 12 hours.",
+      "hypothesis": "The cluster is experiencing a high number of a specific type of warning event.",
+      "query": {
+        "sql": "SELECT reason, COUNT(*) as count FROM $events WHERE type = 'Warning' GROUP BY reason ORDER BY count DESC LIMIT 5",
+        "start": "2025-08-03T06:00:00Z",
+        "end": "2025-08-03T18:00:00Z"
+      }
     }
     ```
-10. *Me*: (JSON result showing many `Pulled` events for images like `internal-registry.com/ml-project/cuda-base:latest`, `internal-registry.com/data-science/jupyter-notebook:v2.1`)
-11. *You*: (Final analysis in English) "A disk space issue was detected on node 'node-xyz-123'. ... This strongly suggests that the large images used by specific ML workloads are the likely root cause..."
-
-**Event Schema Reference (`$events` table)**
-- `metadata`: (name, namespace, creationTimestamp)
-- `involvedObject`: (kind, namespace, name)
-- `source`: (component, host)
-- `reason`, `message`, `lastTimestamp`, `type`, `count`
-
-**Additional Query Examples**
-- **Grouping by namespace**: `SELECT metadata.namespace, COUNT(*) as count FROM $events GROUP BY metadata.namespace ORDER BY count DESC`
-- **Time-windowed analysis**: `SELECT time_bucket(INTERVAL 15 MINUTE, lastTimestamp) AS bucket, reason, COUNT(*) AS count FROM $events WHERE type = 'Warning' GROUP BY bucket, reason ORDER BY bucket, count DESC`
-- **Find pods with a specific warning**: `SELECT involvedObject.name, COUNT(*) as count FROM $events WHERE reason = 'FailedMount' GROUP BY involvedObject.name ORDER BY count DESC LIMIT 10`
-
-Be careful that you have a context limit, so every query MUST have a LIMIT except for aggregation queries.
+4.  **System**: (Returns a summary: "Query returned 5 rows. Columns: reason, count. First row summary: {\"reason\": \"FailedMount\", \"count\": 1234}")
+5.  **AI**:
+    ```json
+    {
+      "thought": "The most frequent warning is 'FailedMount'. I need to find out which node is affected to understand the scope of the problem.",
+      "hypothesis": "A specific node is repeatedly failing to mount volumes, causing cluster instability.",
+      "query": {
+        "sql": "SELECT source.host, message, lastTimestamp FROM $events WHERE reason = 'FailedMount' ORDER BY lastTimestamp DESC LIMIT 1",
+        "start": "2025-08-03T06:00:00Z",
+        "end": "2025-08-03T18:00:00Z"
+      }
+    }
+    ```
+6.  **System**: (Returns a summary: "Query returned 1 row... First row summary: {\"source.host\": \"worker-node-002\", ...}")
+7.  **AI**:
+    ```json
+    {
+      "thought": "The issue is located on 'worker-node-002'. Now I need to analyze the sequence of events on that specific node around the time of the failure to find the root cause.",
+      "hypothesis": "The 'FailedMount' event on 'worker-node-002' is preceded by other system-level warnings like disk or memory pressure.",
+      "query": {
+        "sql": "SELECT reason, message, lastTimestamp FROM $events WHERE source.host = 'worker-node-002' ORDER BY lastTimestamp ASC LIMIT 10",
+        "start": "2025-08-03T17:30:00Z",
+        "end": "2025-08-03T18:00:00Z"
+      }
+    }
+    ```
+8.  **System**: (Returns a summary showing a sequence of events like 'NodeHasDiskPressure' -> 'EvictionThresholdMet' -> 'FailedMount')
+9.  **AI**:
+    ```json
+    {
+      "thought": "The investigation is complete. I have found a clear causal link between disk pressure and the mount failures.",
+      "hypothesis": "The 'FailedMount' errors on 'worker-node-002' are the result of the node running out of disk space, which prevented new volumes from being mounted.",
+      "final_analysis": "The cluster instability is caused by 'FailedMount' events concentrated on node 'worker-node-002'. The timeline analysis reveals that these failures are a direct symptom of 'NodeHasDiskPressure' events. This indicates the node is running out of disk space. Recommend inspecting the disk usage on 'worker-node-002' and cleaning up unnecessary files, such as old container images or logs."
+    }
+    ```
 
 You must now begin the investigation based on the user's request.
-Also, ALWAYS respond in the user's language.
 """
 
-def execute_query(query: str, start: str = None, end: str = None) -> dict:
-    """Executes an SQL query by calling the Kube Event Analyzer API."""
+@dataclass
+class InvestigationState:
+    """Manages the state of a single investigation."""
+    user_request: str
+    max_turns: int = 7
+    turn: int = 0
+    hypothesis: str = "Initial hypothesis pending."
+    messages: list = field(default_factory=list)
+
+    def __post_init__(self):
+        self.messages.append({"role": "system", "content": SYSTEM_PROMPT})
+        self.messages.append({"role": "user", "content": self.user_request})
+
+    def add_ai_response(self, response: dict):
+        self.messages.append({"role": "assistant", "content": json.dumps(response)})
+
+    def add_system_observation(self, content: str):
+        print(f"\n[SYSTEM] {content}")
+        self.messages.append({"role": "system", "content": content})
+
+    def is_complete(self) -> bool:
+        return self.turn >= self.max_turns
+
+def execute_query(query: str, start: str, end: str) -> dict:
+    """Executes an SQL query against the Kube Event Analyzer API."""
     print(f"\n[INFO] Executing query:\n{query}")
-    if not API_URL or "your-kube-event-analyzer-api.com" in API_URL:
-        return {"error": "KUBE_EVENT_ANALYZER_URL environment variable is not set."}
-
-    # Set default time range if not provided
-    now = datetime.now(timezone.utc)
-    if not end:
-        end = now.isoformat()
-    if not start:
-        start = (now - timedelta(hours=12)).isoformat()
-    
     print(f"[INFO] Query time range: {start} to {end}")
-
     try:
-        payload = {
-            "start": start,
-            "end": end,
-            "query": query
-        }
+        payload = {"start": start, "end": end, "query": query}
         response = requests.post(API_URL, json=payload, timeout=30)
         response.raise_for_status()
         return response.json()
@@ -146,85 +198,98 @@ def execute_query(query: str, start: str = None, end: str = None) -> dict:
     except json.JSONDecodeError:
         return {"error": "API response is not valid JSON.", "content": response.text}
 
-def get_ai_response(messages: list) -> str:
-    """Fetches the AI's response from the OpenAI API, injecting the current time."""
+def get_ai_plan(state: InvestigationState) -> dict:
+    """Fetches the AI's next plan of action (thought, hypothesis, query)."""
     print("\n[INFO] AI is analyzing and planning the next step...")
     
     current_time_utc = datetime.now(timezone.utc).isoformat()
-    # Create a temporary list of messages to avoid modifying the original history
-    timed_messages = messages + [{
+    timed_messages = state.messages + [{
         "role": "system",
-        "content": f"The current UTC time is {current_time_utc}. Use this to construct the 'start' and 'end' times for your query. Remember to default to the last 12 hours if unsure."
+        "content": f"The current UTC time is {current_time_utc}. Use this to construct your query's time range."
     }]
 
     completion = client.chat.completions.create(
-        model="gpt-4o", # Using a more recent model
-        messages=timed_messages
+        model="gpt-4.1",
+        messages=timed_messages,
+        response_format={"type": "json_object"}
     )
-    return completion.choices[0].message.content
+    
+    response_content = completion.choices[0].message.content
+    try:
+        return json.loads(response_content)
+    except json.JSONDecodeError:
+        print(f"[ERROR] AI returned invalid JSON:\n{response_content}")
+        return {"final_analysis": "Error: The AI returned a response that was not valid JSON."}
+
+
+def summarize_result(result: dict) -> str:
+    """Creates a concise summary of a query result to save context space."""
+    if "error" in result:
+        return f"Query failed with error: {result['error']}"
+    
+    results_list = result.get("results", [])
+    if not results_list:
+        return "Query returned no results (an empty list: [])."
+
+    count = len(results_list)
+    columns = list(results_list[0].keys()) if results_list else []
+    
+    summary = f"Query returned {count} rows. Columns: {', '.join(columns)}. "
+    if count > 0:
+        summary += f"First row summary: {json.dumps(results_list[0])}"
+    
+    return summary
+
 
 def main():
     """Main function to handle the conversation with the AI agent."""
     print("🤖 Hello! I am an AI agent for analyzing Kubernetes cluster events.")
-    print("Please ask me about the cluster status. (Type 'exit' to quit)")
-
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    print("Please state the problem you are observing. (Type 'exit' to quit)")
 
     while True:
         user_input = input("\n[User] ")
         if user_input.lower() == 'exit':
-            print("🤖 Exiting conversation. Thank you for using the service.")
+            print("🤖 Exiting conversation.")
             break
-        
-        messages.append({"role": "user", "content": user_input})
 
-        MAX_TURNS = 7
-        for i in range(MAX_TURNS):
-            print(f"\n===== [Investigation Step {i + 1}/{MAX_TURNS}] =====")
+        state = InvestigationState(user_request=user_input)
+
+        while not state.is_complete():
+            state.turn += 1
+            print(f"\n===== [Investigation Step {state.turn}/{state.max_turns}] =====")
             
-            ai_response_content = get_ai_response(messages)
-            messages.append({"role": "assistant", "content": ai_response_content})
+            ai_plan = get_ai_plan(state)
+            state.add_ai_response(ai_plan)
 
-            if "```json" in ai_response_content:
-                try:
-                    json_str = ai_response_content.split("```json")[1].split("```")[0].strip()
-                    query_data = json.loads(json_str)
-                    
-                    sql_query = query_data.get("query")
-                    start_time = query_data.get("start")
-                    end_time = query_data.get("end")
+            print(f"[AI Thought] {ai_plan.get('thought')}")
+            state.hypothesis = ai_plan.get('hypothesis', state.hypothesis)
+            print(f"[AI Hypothesis] {state.hypothesis}")
 
-                    if not sql_query:
-                        raise KeyError("'query' key is missing in the JSON response.")
-
-                    query_result = execute_query(sql_query, start_time, end_time)
-                    if "error" in query_result:
-                        print(f"\n[ERROR] Query execution failed: {query_result['error']}")
-                        messages.append({"role": "system", "content": f"Query execution failed: {query_result['error']}"})
-                        continue
-
-                    result_str = json.dumps(query_result, indent=2, ensure_ascii=False)
-                    summary = result_str if len(result_str) < 1000 else result_str[:1000] + "..."
-                    print(f"\n[INFO] API Result Summary:\n{summary}")
-
-                    messages.append({
-                        "role": "system",
-                        "content": f"Query executed. Here is the JSON result. Analyze it, form a new hypothesis if needed, and decide whether to generate another query for deeper investigation or to provide a final analysis in English.\n{result_str}"
-                    })
-
-                except (json.JSONDecodeError, KeyError, IndexError) as e:
-                    error_message = f"AI returned a response that could not be processed. Error: {e}. The response was:\n{ai_response_content}"
-                    print(f"\n[ERROR] {error_message}")
-                    messages.append({"role": "system", "content": error_message})
-                    continue # Try again on the next turn
-            else:
-                print(f"\n[AI Agent Final Analysis]\n{ai_response_content}")
+            if "final_analysis" in ai_plan:
+                print(f"\n[AI Agent Final Analysis]\n{ai_plan['final_analysis']}")
                 break
+
+            query_info = ai_plan.get("query")
+            if not query_info or not query_info.get("sql"):
+                state.add_system_observation("AI did not provide a valid query. Ending investigation.")
+                print("\n[AI Agent Final Analysis]\nNo further action taken.")
+                break
+
+            query_result = execute_query(
+                query_info["sql"],
+                query_info["start"],
+                query_info["end"]
+            )
+            
+            result_summary = summarize_result(query_result)
+            system_observation = f"Query executed. Here is a summary of the result:\n{result_summary}"
+            state.add_system_observation(system_observation)
+
         else:
-            print("\n🤖 Reached the maximum number of investigation steps. Providing analysis based on the information gathered so far.")
-            messages.append({"role": "system", "content": "You have reached the maximum number of turns. Please summarize your findings so far in English and provide a final analysis."})
-            final_summary = get_ai_response(messages)
-            print(f"\n[AI Agent Final Summary]\n{final_summary}")
+            print("\n🤖 Reached the maximum number of investigation steps.")
+            state.add_system_observation("You have reached the maximum number of turns. Please summarize your findings and provide a final analysis.")
+            final_plan = get_ai_plan(state)
+            print(f"\n[AI Agent Final Summary]\n{final_plan.get('final_analysis', 'No summary provided.')}")
 
 
 if __name__ == "__main__":
