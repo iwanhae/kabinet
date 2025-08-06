@@ -139,10 +139,10 @@ graph LR
     ```bash
     # Build the frontend
     npm run build
-    
+
     # Build the Go binary (includes embedded frontend)
     go build -o kube-event-analyzer main.go
-    
+
     # Run the production binary
     ./kube-event-analyzer
     ```
@@ -159,7 +159,6 @@ docker build -t kube-event-analyzer .
 docker run -d \
   --name kube-event-analyzer \
   -p 8080:8080 \
-  -e ARCHIVE_INTERVAL=3h \
   -e STORAGE_LIMIT_GB=10 \
   -v ~/.kube/config:/root/.kube/config:ro \
   -v $(pwd)/data:/data \
@@ -199,7 +198,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 ### **Intelligent Storage Management**
 
 - **Hybrid Storage**: A fast, file-backed DuckDB instance for recent data, compressed Parquet for archives
-- **Automatic Archiving**: Configurable intervals for data lifecycle management (default: 3 hours)
+- **Automatic Archiving**: Archiving is triggered when the `kube_events` table reaches 1,228,800 rows.
 - **Space Management**: Automatic cleanup when storage limits are reached (default: 10GB)
 - **ZSTD Compression**: Efficient compression for long-term storage (Roughtly 10x smaller than just storing the raw events)
 
@@ -278,11 +277,10 @@ For detailed query examples and advanced usage, see `DEVELOPMENT_QUERY_GUIDE.md`
 
 The application can be configured using the following environment variables:
 
-| Variable                | Description                                                                      | Default | Example |
-| ----------------------- | -------------------------------------------------------------------------------- | ------- | ------- |
-| `ARCHIVE_TABLE_SIZE_MB` | The size threshold in megabytes for the `kube_events` table to trigger archival. | `512`   | `1024`  |
-| `STORAGE_LIMIT_GB`      | The maximum total size of the data directory in gigabytes.                       | `10`    | `20`    |
-| `LISTEN_PORT`           | The port on which the API server will listen.                                    | `8080`  | `8888`  |
+| Variable           | Description                                                | Default | Example |
+| ------------------ | ---------------------------------------------------------- | ------- | ------- |
+| `STORAGE_LIMIT_GB` | The maximum total size of the data directory in gigabytes. | `10`    | `20`    |
+| `LISTEN_PORT`      | The port on which the API server will listen.              | `8080`  | `8888`  |
 
 ## Development
 

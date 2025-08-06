@@ -14,11 +14,12 @@ import (
 )
 
 // LifecycleManager manages data lifecycle with periodic archiving and retention enforcement
-func (s *Storage) LifecycleManager(ctx context.Context, archiveTableSizeMB, storageLimitBytes int64) {
-	log.Printf("storage: starting data lifecycle manager. check_interval=1m, archive_table_size_mb=%d, storage_limit_bytes=%d",
-		archiveTableSizeMB, storageLimitBytes)
+func (s *Storage) LifecycleManager(ctx context.Context, storageLimitBytes int64) {
+	log.Printf("storage: starting data lifecycle manager. check_interval=1m, archive_row_count_threshold=%d, storage_limit_bytes=%d",
+		1228800, storageLimitBytes)
 
-	archiveTableSizeBytes := archiveTableSizeMB * 1024 * 1024
+	// Fixed row count threshold: 1,228,800 rows
+	archiveRowCountThreshold := int64(1228800)
 
 	// Ticker for periodic maintenance (compaction and retention)
 	ticker := time.NewTicker(1 * time.Minute)
@@ -27,10 +28,10 @@ func (s *Storage) LifecycleManager(ctx context.Context, archiveTableSizeMB, stor
 	for {
 		select {
 		case <-ticker.C:
-			// Check table size and archive if it exceeds the threshold
-			_, err := s.archiveByTableSize(ctx, archiveTableSizeBytes)
+			// Check row count and archive if it exceeds the threshold
+			_, err := s.archiveByRowCount(ctx, archiveRowCountThreshold)
 			if err != nil {
-				log.Printf("storage: error during size-based archival: %v", err)
+				log.Printf("storage: error during row-count-based archival: %v", err)
 			}
 
 			// Run maintenance tasks (compaction and retention)
@@ -47,22 +48,23 @@ func (s *Storage) LifecycleManager(ctx context.Context, archiveTableSizeMB, stor
 	}
 }
 
-func (s *Storage) archiveByTableSize(ctx context.Context, archiveTableSizeBytes int64) (bool, error) {
-	// Get actual file size using os.Stat
-	fileInfo, err := os.Stat(s.dbPath)
+func (s *Storage) archiveByRowCount(ctx context.Context, archiveRowCountThreshold int64) (bool, error) {
+	// Get actual row count
+	var rowCount int64
+	countQuery := `SELECT COUNT(*) FROM kube_events`
+	err := s.db.QueryRowContext(ctx, countQuery).Scan(&rowCount)
 	if err != nil {
-		return false, fmt.Errorf("failed to get database file size: %w", err)
+		return false, fmt.Errorf("failed to count rows in kube_events: %w", err)
 	}
 
-	fileSize := fileInfo.Size()
-	if fileSize > archiveTableSizeBytes {
-		log.Printf("storage: database file size (%d bytes) exceeds threshold (%d bytes). starting archival.", fileSize, archiveTableSizeBytes)
+	if rowCount > archiveRowCountThreshold {
+		log.Printf("storage: kube_events table row count (%d) exceeds threshold (%d). starting archival.", rowCount, archiveRowCountThreshold)
 		if err := s.archive(ctx); err != nil {
 			return false, fmt.Errorf("failed to archive table: %w", err)
 		}
 		return true, nil
 	} else {
-		log.Printf("storage: database file size (%d bytes) is below threshold (%d bytes). skipping archival.", fileSize, archiveTableSizeBytes)
+		log.Printf("storage: kube_events table row count (%d) is below threshold (%d). skipping archival.", rowCount, archiveRowCountThreshold)
 	}
 	return false, nil
 }

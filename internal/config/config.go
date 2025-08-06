@@ -8,25 +8,22 @@ import (
 
 // Config holds all configuration for the application, loaded from environment variables.
 type Config struct {
-	ArchiveTableSizeMB int64
-	StorageLimitBytes  int64
-	ListenPort         string
+	StorageLimitBytes int64
+	ListenPort        string
 }
 
 // Load reads configuration from environment variables and returns a new Config struct.
 // It falls back to default values if environment variables are not set or invalid.
 func Load() *Config {
-	archiveTableSizeMB := getEnvAsInt64("ARCHIVE_TABLE_SIZE_MB", 512)
 	storageLimitGB := getEnvAsInt64("STORAGE_LIMIT_GB", 10)
 	listenPort := getEnv("LISTEN_PORT", "8080")
 
 	cfg := &Config{
-		ArchiveTableSizeMB: archiveTableSizeMB,
-		StorageLimitBytes:  storageLimitGB * 1024 * 1024 * 1024,
-		ListenPort:         listenPort,
+		StorageLimitBytes: storageLimitGB * 1024 * 1024 * 1024,
+		ListenPort:        listenPort,
 	}
 
-	log.Printf("config: loaded configuration: ArchiveTableSizeMB=%d, StorageLimitGB=%d, ListenPort=%s", cfg.ArchiveTableSizeMB, storageLimitGB, cfg.ListenPort)
+	log.Printf("config: loaded configuration: StorageLimitGB=%d, ListenPort=%s", storageLimitGB, cfg.ListenPort)
 	return cfg
 }
 
