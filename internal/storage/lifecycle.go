@@ -48,27 +48,21 @@ func (s *Storage) LifecycleManager(ctx context.Context, archiveTableSizeMB, stor
 }
 
 func (s *Storage) archiveByTableSize(ctx context.Context, archiveTableSizeBytes int64) (bool, error) {
-	var tableName string
-	var estimatedSize sql.NullInt64
-	query := `SELECT table_name, estimated_size FROM duckdb_tables() WHERE table_name='kube_events'`
-	err := s.db.QueryRowContext(ctx, query).Scan(&tableName, &estimatedSize)
-
+	// Get actual file size using os.Stat
+	fileInfo, err := os.Stat(s.dbPath)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			// table doesn't exist yet, which is fine
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to query table size: %w", err)
+		return false, fmt.Errorf("failed to get database file size: %w", err)
 	}
 
-	if estimatedSize.Valid && estimatedSize.Int64 > archiveTableSizeBytes {
-		log.Printf("storage: kube_events table size (%d bytes) exceeds threshold (%d bytes). starting archival.", estimatedSize.Int64, archiveTableSizeBytes)
+	fileSize := fileInfo.Size()
+	if fileSize > archiveTableSizeBytes {
+		log.Printf("storage: database file size (%d bytes) exceeds threshold (%d bytes). starting archival.", fileSize, archiveTableSizeBytes)
 		if err := s.archive(ctx); err != nil {
 			return false, fmt.Errorf("failed to archive table: %w", err)
 		}
 		return true, nil
 	} else {
-		log.Printf("storage: kube_events table size (%d bytes) is below threshold (%d bytes). skipping archival.", estimatedSize.Int64, archiveTableSizeBytes)
+		log.Printf("storage: database file size (%d bytes) is below threshold (%d bytes). skipping archival.", fileSize, archiveTableSizeBytes)
 	}
 	return false, nil
 }
