@@ -111,8 +111,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	pr, pw := io.Pipe()
 	gzw := gzip.NewWriter(w)
 
-	w.Header().Set("Content-Type", "application/jsonl")
-	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Set("Content-Type", "application/octet-stream")
 	filename := fmt.Sprintf("events_%s_%s.jsonl.gz", start.Format("20060102T150405"), end.Format("20060102T150405"))
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 

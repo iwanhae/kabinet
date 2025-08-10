@@ -7,6 +7,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/query": "http://localhost:8080",
+      "/download": "http://localhost:8080",
     },
   },
 });
