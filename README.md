@@ -1,6 +1,9 @@
-# Kabinet
+<img src="./logo.png" alt="Kabinet Logo" style="zoom: 50%;" />
 
-Kabinet is a standalone, lightweight tool designed to efficiently collect, store, and analyze Kubernetes events. It provides an alternative to complex and heavy solutions like the ELK stack, offering a simple, single-binary solution with a powerful web interface perfect for clusters of all sizes.
+# Kabinet — Kubernetes event filing cabinet
+
+Kabinet is a single-binary "event cabinet" for Kubernetes: it collects cluster events in real time, stores them efficiently (DuckDB + Parquet), and lets you explore them on demand with fast queries and dashboards.
+
 
 ## The Problem
 
@@ -50,7 +53,7 @@ The project is a single Go binary that consists of three main components:
 graph LR
     A["K8s API Server"] -- "Events" --> B["Event Collector"]
 
-    subgraph "Kabinet"
+    subgraph "Kabinet (Event Cabinet)"
         subgraph "API & Web Server"
             H["HTTP Server :8080"] --> I["Query Endpoint"]
             H --> J["Static Web Files"]
@@ -139,10 +142,10 @@ graph LR
     ```bash
     # Build the frontend
     npm run build
-
+    
     # Build the Go binary (includes embedded frontend)
     go build -o kabinet main.go
-
+    
     # Run the production binary
     ./kabinet
     ```
