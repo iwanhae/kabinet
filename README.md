@@ -4,7 +4,6 @@
 
 Kabinet is a single-binary "event cabinet" for Kubernetes: it collects cluster events in real time, stores them efficiently (DuckDB + Parquet), and lets you explore them on demand with fast queries and dashboards.
 
-
 ## The Problem
 
 Monitoring Kubernetes events is crucial for maintaining cluster health. However, traditional methods often fall short:
@@ -142,10 +141,10 @@ graph LR
     ```bash
     # Build the frontend
     npm run build
-    
+
     # Build the Go binary (includes embedded frontend)
     go build -o kabinet main.go
-    
+
     # Run the production binary
     ./kabinet
     ```
@@ -238,6 +237,26 @@ The primary API endpoint accepts SQL queries with time range parameters. The `$e
   "total_files_size_bytes": 12345678
 }
 ```
+
+### Download Endpoint: `GET /download`
+
+Streams Kubernetes events that match a `WHERE` clause and time range as gzipped JSON Lines in chronological order.
+
+**Query Parameters:**
+
+- `from`: start time (RFC3339)
+- `to`: end time (RFC3339)
+- `where`: SQL `WHERE` clause applied to `$events`
+
+**Example:**
+
+```bash
+curl -L "http://localhost:8080/download?from=2025-01-01T00:00:00Z&to=2025-01-02T00:00:00Z&where=type%20=%20'Warning'" \
+  --output events.jsonl.gz
+```
+
+The response sets `Content-Type: application/jsonl` and `Content-Encoding: gzip`, and events are ordered by `lastTimestamp`.
+The Discover page includes a **Download** button that calls this endpoint with the current filters.
 
 ### Example: Top Event Reasons
 

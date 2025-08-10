@@ -8,6 +8,7 @@ import {
   alpha,
 } from "@mui/material";
 import { styled } from "@mui/material/styles";
+import { useTimeRange } from "../hooks/useUrlParams";
 
 interface QueryFormProps {
   whereClause: string;
@@ -29,10 +30,22 @@ const QueryForm: React.FC<QueryFormProps> = ({
   onExecuteQuery,
   isLoading,
 }) => {
+  const { from, to } = useTimeRange();
+
   const handleKeyPress = (event: React.KeyboardEvent) => {
     if (event.key === "Enter" && event.ctrlKey) {
       onExecuteQuery();
     }
+  };
+
+  const handleDownload = () => {
+    const trimmedWhere = whereClause.trim() || "1=1";
+    const params = new URLSearchParams({
+      where: trimmedWhere,
+      from,
+      to,
+    });
+    window.location.href = `/download?${params.toString()}`;
   };
 
   return (
@@ -126,6 +139,21 @@ const QueryForm: React.FC<QueryFormProps> = ({
           ) : (
             "Execute"
           )}
+        </Button>
+        <Button
+          variant="outlined"
+          onClick={handleDownload}
+          size="large"
+          sx={{
+            minWidth: 120,
+            height: "fit-content",
+            px: 3,
+            py: 1.5,
+            borderRadius: 1.5,
+            fontWeight: 600,
+          }}
+        >
+          Download
         </Button>
       </QueryBox>
     </Box>

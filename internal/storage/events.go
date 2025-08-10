@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -147,4 +150,131 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 	log.Printf("storage: inserted %d events into kube_events", len(k8sEvents))
 
 	return nil
+}
+
+// buildEventsQuery constructs the final SQL query for $events within the given time range.
+// It returns the query with the $events macro replaced by the appropriate FROM clause
+// and the list of Parquet files involved.
+func (s *Storage) buildEventsQuery(query string, start, end time.Time) (string, []ParquetFileInfo, error) {
+	files, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to read data directory: %w", err)
+	}
+
+	queryStartTs := start.Unix()
+	queryEndTs := end.Unix()
+
+	var relevantFiles []ParquetFileInfo
+	var latestParquetMaxTs int64
+
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".parquet") {
+			continue
+		}
+
+		info, err := file.Info()
+		if err != nil {
+			log.Printf("storage: could not get file info for %s: %v", file.Name(), err)
+			continue
+		}
+
+		minTs, maxTs, ok := parseParquetFilename(file.Name())
+		if !ok {
+			log.Printf("storage: could not parse filename %s, including it just in case.", file.Name())
+			relevantFiles = append(relevantFiles, ParquetFileInfo{
+				Path: filepath.Join(s.dataDir, file.Name()),
+				Size: info.Size(),
+			})
+			continue
+		}
+
+		if maxTs > latestParquetMaxTs {
+			latestParquetMaxTs = maxTs
+		}
+
+		if maxTs >= queryStartTs && minTs <= queryEndTs {
+			relevantFiles = append(relevantFiles, ParquetFileInfo{
+				Path: filepath.Join(s.dataDir, file.Name()),
+				Size: info.Size(),
+			})
+		}
+	}
+
+	includeKubeEvents := true
+	if latestParquetMaxTs > 0 && queryEndTs < latestParquetMaxTs {
+		includeKubeEvents = false
+	}
+
+	relevantFilePaths := make([]string, len(relevantFiles))
+	for i, f := range relevantFiles {
+		relevantFilePaths[i] = f.Path
+	}
+
+	fromClause, err := buildFromClause(relevantFilePaths, includeKubeEvents, start, end)
+	if err != nil {
+		log.Println("storage: query time range resulted in no data sources. returning empty result.")
+		return "", nil, fmt.Errorf("query time range resulted in no data sources")
+	}
+
+	finalQuery := strings.Replace(query, "$events", fromClause, 1)
+	return finalQuery, relevantFiles, nil
+}
+
+// StreamEvents executes the built events query and streams each row to the provided handler
+// without loading all rows into memory.
+func (s *Storage) StreamEvents(ctx context.Context, where string, start, end time.Time, handler func(map[string]any) error) (*RangeQueryResult, error) {
+	baseQuery := "SELECT * FROM $events"
+	if strings.TrimSpace(where) != "" {
+		baseQuery += " WHERE " + where
+	}
+	baseQuery += " ORDER BY lastTimestamp"
+
+	finalQuery, files, err := s.buildEventsQuery(baseQuery, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	rows, err := s.db.QueryContext(ctx, finalQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+
+	for rows.Next() {
+		rowValues := make([]any, len(columns))
+		rowPtrs := make([]any, len(columns))
+		for i := range rowValues {
+			rowPtrs[i] = &rowValues[i]
+		}
+
+		if err := rows.Scan(rowPtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		rowData := make(map[string]any, len(columns))
+		for i, colName := range columns {
+			val := rowValues[i]
+			if b, ok := val.([]byte); ok {
+				rowData[colName] = string(b)
+			} else {
+				rowData[colName] = val
+			}
+		}
+
+		if err := handler(rowData); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	return &RangeQueryResult{Duration: time.Since(now), Files: files}, nil
 }
