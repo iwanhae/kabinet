@@ -95,7 +95,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 component="div"
                 sx={{ fontWeight: 700 }}
               >
-                Kube Event Analyzer
+                Kabinet
               </Typography>
               <Chip
                 label="Analytics"

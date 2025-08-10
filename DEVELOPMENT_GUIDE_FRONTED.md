@@ -1,6 +1,6 @@
 # Frontend Development Guide
 
-Welcome to the Kube Event Analyzer frontend! This guide provides the necessary information to get you started with development.
+Welcome to the Kabinet frontend! This guide provides the necessary information to get you started with development.
 
 **Current Status**: The frontend is fully implemented and production-ready, featuring a comprehensive analytics dashboard, advanced query builder, and real-time data visualization capabilities.
 

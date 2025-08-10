@@ -6,7 +6,7 @@ import (
 
 // EventsCollected counts the number of Kubernetes events the collector has observed.
 var EventsCollected = prometheus.NewCounter(prometheus.CounterOpts{
-    Namespace: "kube_event_analyzer",
+    Namespace: "kabinet",
     Name:      "events_collected_total",
     Help:      "Total number of Kubernetes events collected by the watcher.",
 })
@@ -16,4 +16,3 @@ var EventsCollected = prometheus.NewCounter(prometheus.CounterOpts{
 func Init() {
     prometheus.MustRegister(EventsCollected)
 }
-

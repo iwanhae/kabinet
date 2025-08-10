@@ -1,4 +1,4 @@
-module github.com/iwanhae/kube-event-analyzer
+module github.com/iwanhae/kabinet
 
 go 1.24.2
 

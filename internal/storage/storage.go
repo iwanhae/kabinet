@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/iwanhae/kube-event-analyzer/internal/utils"
+    "github.com/iwanhae/kabinet/internal/utils"
 	_ "github.com/marcboeker/go-duckdb/v2"
 	corev1 "k8s.io/api/core/v1"
 )

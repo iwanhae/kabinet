@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Summary
-Kube Event Analyzer is a single‑binary tool that collects Kubernetes events in real time, stores recent data in DuckDB, and archives history to ZSTD‑compressed Parquet. It exposes a REST API for SQL queries that unify live and historical data and serves a React UI for dashboards and ad‑hoc exploration. Designed to be lightweight and fast, it avoids ELK‑style complexity while providing rich analytics, a query builder, and time‑range aware fetching.
+Kabinet is a single‑binary tool that collects Kubernetes events in real time, stores recent data in DuckDB, and archives history to ZSTD‑compressed Parquet. It exposes a REST API for SQL queries that unify live and historical data and serves a React UI for dashboards and ad‑hoc exploration. Designed to be lightweight and fast, it avoids ELK‑style complexity while providing rich analytics, a query builder, and time‑range aware fetching.
 
 For more details, please refer to the [README](README.md).
 
@@ -16,8 +16,8 @@ For more details, please refer to the [README](README.md).
 ## Build, Test, and Development Commands
 - Install deps: `go mod download` | `npm install`.
 - Dev servers: `npm run dev` (UI at http://localhost:5173), `go run main.go` (API at http://localhost:8080).
-- Production build: `npm run build` then `go build -o kube-event-analyzer main.go`.
-- Docker: `docker build -t kube-event-analyzer .` and run with volume mounts for `~/.kube/config` and `./data`.
+- Production build: `npm run build` then `go build -o kabinet main.go`.
+- Docker: `docker build -t kabinet .` and run with volume mounts for `~/.kube/config` and `./data`.
 - Lint (frontend): `npm run lint`.
 - Tests (if present): `go test ./...` and UI tests via your chosen runner.
 

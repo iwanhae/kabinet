@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/iwanhae/kube-event-analyzer/internal/storage"
+    "github.com/iwanhae/kabinet/internal/storage"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 

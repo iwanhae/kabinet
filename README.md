@@ -1,6 +1,6 @@
-# Kube Event Analyzer
+# Kabinet
 
-Kube Event Analyzer is a standalone, lightweight tool designed to efficiently collect, store, and analyze Kubernetes events. It provides an alternative to complex and heavy solutions like the ELK stack, offering a simple, single-binary solution with a powerful web interface perfect for clusters of all sizes.
+Kabinet is a standalone, lightweight tool designed to efficiently collect, store, and analyze Kubernetes events. It provides an alternative to complex and heavy solutions like the ELK stack, offering a simple, single-binary solution with a powerful web interface perfect for clusters of all sizes.
 
 ## The Problem
 
@@ -12,7 +12,7 @@ Monitoring Kubernetes events is crucial for maintaining cluster health. However,
 
 ## Our Solution
 
-Kube Event Analyzer addresses these problems with a streamlined, all-in-one approach:
+Kabinet addresses these problems with a streamlined, all-in-one approach:
 
 - **Real-Time Collection**: Uses the Kubernetes `WATCH` API to subscribe to events directly, ensuring minimal latency.
 - **Efficient Storage**: Events are initially stored in a fast, file-backed DuckDB database for durable ingestion. They are then periodically archived into compressed Parquet files (`zstd` compression) for long-term storage, offering a great balance between performance and disk space.
@@ -50,7 +50,7 @@ The project is a single Go binary that consists of three main components:
 graph LR
     A["K8s API Server"] -- "Events" --> B["Event Collector"]
 
-    subgraph "Kube Event Analyzer"
+    subgraph "Kabinet"
         subgraph "API & Web Server"
             H["HTTP Server :8080"] --> I["Query Endpoint"]
             H --> J["Static Web Files"]
@@ -141,10 +141,10 @@ graph LR
     npm run build
 
     # Build the Go binary (includes embedded frontend)
-    go build -o kube-event-analyzer main.go
+    go build -o kabinet main.go
 
     # Run the production binary
-    ./kube-event-analyzer
+    ./kabinet
     ```
 
 ### Docker Deployment
@@ -153,16 +153,16 @@ The application can be configured via environment variables. See the **Configura
 
 ```bash
 # Build the Docker image
-docker build -t kube-event-analyzer .
+docker build -t kabinet .
 
 # Run with persistent data storage and custom configuration
 docker run -d \
-  --name kube-event-analyzer \
+  --name kabinet \
   -p 8080:8080 \
   -e STORAGE_LIMIT_GB=10 \
   -v ~/.kube/config:/root/.kube/config:ro \
   -v $(pwd)/data:/data \
-  kube-event-analyzer
+  kabinet
 ```
 
 ### Access the Web Interface

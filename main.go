@@ -10,11 +10,11 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/iwanhae/kube-event-analyzer/internal/api"
-	"github.com/iwanhae/kube-event-analyzer/internal/collector"
-	"github.com/iwanhae/kube-event-analyzer/internal/config"
-	"github.com/iwanhae/kube-event-analyzer/internal/metrics"
-	"github.com/iwanhae/kube-event-analyzer/internal/storage"
+    "github.com/iwanhae/kabinet/internal/api"
+    "github.com/iwanhae/kabinet/internal/collector"
+    "github.com/iwanhae/kabinet/internal/config"
+    "github.com/iwanhae/kabinet/internal/metrics"
+    "github.com/iwanhae/kabinet/internal/storage"
 )
 
 //go:embed all:dist
