@@ -117,5 +117,5 @@ func buildFromClause(relevantFiles []string, includeKubeEvents bool, from, to ti
 		return "", fmt.Errorf("no data sources for query")
 	}
 
-	return fmt.Sprintf("(%s)", strings.Join(fromSources, " UNION BY NAME ")), nil
+	return fmt.Sprintf("(%s)", strings.Join(fromSources, " UNION ALL BY NAME ")), nil
 }

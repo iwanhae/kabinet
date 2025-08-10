@@ -54,7 +54,7 @@ func TestBuildFromClause(t *testing.T) {
 			includeKubeEvents: true,
 			from:              from,
 			to:                to,
-			expectedClause:    fmt.Sprintf("(SELECT * FROM kube_events WHERE lastTimestamp BETWEEN '%s' AND '%s' UNION BY NAME SELECT * FROM read_parquet(['/data/file1.parquet', '/data/file2.parquet']) WHERE lastTimestamp BETWEEN '%s' AND '%s')", fromStr, toStr, fromStr, toStr),
+			expectedClause:    fmt.Sprintf("(SELECT * FROM kube_events WHERE lastTimestamp BETWEEN '%s' AND '%s' UNION ALL BY NAME SELECT * FROM read_parquet(['/data/file1.parquet', '/data/file2.parquet']) WHERE lastTimestamp BETWEEN '%s' AND '%s')", fromStr, toStr, fromStr, toStr),
 			expectError:       false,
 		},
 		{
