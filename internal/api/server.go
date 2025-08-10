@@ -36,26 +36,35 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	// Prometheus metrics
 	mux.Handle("/metrics", promhttp.Handler())
 
-	// Frontend Handler
-	staticFS, err := fs.Sub(distFS, "dist")
-	if err != nil {
-		log.Fatalf("server: failed to create static file system: %v", err)
-	}
-	fileServer := http.FileServerFS(staticFS)
+    // Frontend Handler
+    staticFS, err := fs.Sub(distFS, "dist")
+    if err != nil {
+        log.Fatalf("server: failed to create static file system: %v", err)
+    }
+    fileServer := http.FileServerFS(staticFS)
 
-	mux.Handle("/", fileServer)
-	// serve index.html for SPA routing
-	mux.Handle("/discover", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		file, err := staticFS.Open("index.html")
-		if err != nil {
-			http.Error(w, "server: could not open index.html", http.StatusInternalServerError)
-			return
-		}
-		defer file.Close()
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.Copy(w, file) // Copy index.html content to response
-	}))
+    mux.Handle("/", fileServer)
+    // serve index.html for SPA routing under /p/*
+    mux.Handle("/p/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        file, err := staticFS.Open("index.html")
+        if err != nil {
+            http.Error(w, "server: could not open index.html", http.StatusInternalServerError)
+            return
+        }
+        defer file.Close()
+        w.Header().Set("Content-Type", "text/html")
+        w.WriteHeader(http.StatusOK)
+        _, _ = io.Copy(w, file) // Copy index.html content to response
+    }))
+
+    // backward compatibility: redirect /discover -> /p/discover
+    mux.HandleFunc("/discover", func(w http.ResponseWriter, r *http.Request) {
+        target := "/p/discover"
+        if r.URL.RawQuery != "" {
+            target += "?" + r.URL.RawQuery
+        }
+        http.Redirect(w, r, target, http.StatusMovedPermanently)
+    })
 
 	s.server = &http.Server{
 		Addr:    ":" + port,

@@ -18,7 +18,8 @@ export const useNavigation = () => {
 
   return (options: NavigationOptions): string => {
     if (options.page === "insight") options.page = "";
-    const href = `/${options.page}?${new URLSearchParams({
+    const base = options.page ? `/p/${options.page}` : "/";
+    const href = `${base}?${new URLSearchParams({
       from: fromParam,
       to: toParam,
       ...options.params, // params will override the search params

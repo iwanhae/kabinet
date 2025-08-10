@@ -222,7 +222,7 @@ curl http://localhost:8080/stats
 ### Web Interface Routes
 
 - `GET /` - Analytics Dashboard (main insights page)
-- `GET /discover` - Query builder and event exploration interface
+- `GET /p/discover` - Query builder and event exploration interface
 
 These routes serve the React frontend application for interactive data exploration.
 

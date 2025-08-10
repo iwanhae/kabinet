@@ -21,6 +21,10 @@ For more details, please refer to the [README](README.md).
 - Lint (frontend): `npm run lint`.
 - Tests (if present): `go test ./...` and UI tests via your chosen runner.
 
+## Agent Checklist (Before Finishing Work)
+- Run frontend lint: `npm run lint`
+- Verify backend builds: `go build -o main .`
+
 ## Coding Style & Naming Conventions
 - Go: `go fmt ./...`; idiomatic Go; packages lowercase, exported `CamelCase`, errors wrapped with context.
 - TypeScript/React: ESLint; components `PascalCase` (e.g., `TimeRangePicker.tsx`), hooks `useX`, utility files `camelCase.ts`.

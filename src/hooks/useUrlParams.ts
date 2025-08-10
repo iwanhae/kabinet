@@ -27,7 +27,10 @@ export const useUrlParams = () => {
     };
   };
 
-  const updateParams = (newParams: Partial<UrlParams>, path = "/discover") => {
+  const updateParams = (
+    newParams: Partial<UrlParams>,
+    path = "/p/discover",
+  ) => {
     const currentParams = getCurrentParams();
     const mergedParams = { ...currentParams, ...newParams };
 
@@ -45,7 +48,7 @@ export const useUrlParams = () => {
 
   const clearParams = (keysToKeep?: string[]) => {
     if (!keysToKeep) {
-      setLocation("/discover");
+      setLocation("/p/discover");
       return;
     }
 

@@ -6,7 +6,6 @@ import {
   Toolbar,
   Typography,
   IconButton,
-  Chip,
   Tab,
   Tabs,
 } from "@mui/material";
@@ -93,20 +92,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 variant="h6"
                 noWrap
                 component="div"
-                sx={{ fontWeight: 700 }}
+                sx={{
+                  fontWeight: 700,
+                  color: "primary.main",
+                }}
               >
                 Kabinet
               </Typography>
-              <Chip
-                label="Analytics"
-                size="small"
-                sx={{
-                  backgroundColor: "primary.main",
-                  color: "white",
-                  fontWeight: 600,
-                  fontSize: "0.75rem",
-                }}
-              />
             </Box>
 
             {/* 탭 네비게이션 */}

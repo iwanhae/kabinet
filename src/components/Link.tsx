@@ -21,7 +21,8 @@ export const Link = ({ page, params, children, onClick, style }: LinkProps) => {
 
   if (page === "insight") page = "";
 
-  const href = `/${page}?${new URLSearchParams({
+  const base = page ? `/p/${page}` : "/";
+  const href = `${base}?${new URLSearchParams({
     from: fromParam,
     to: toParam,
     ...params, // params will override the search params

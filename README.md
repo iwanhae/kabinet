@@ -173,7 +173,7 @@ docker run -d \
 Once running, open your browser to `http://localhost:8080` to access:
 
 - **Analytics Dashboard** (`/`): Real-time insights and visualizations
-- **Discover Page** (`/discover`): SQL query builder and event exploration
+- **Discover Page** (`/p/discover`): SQL query builder and event exploration
 
 ## Key Features
 
@@ -273,7 +273,7 @@ curl -X POST http://localhost:8080/query \
 - `GET /stats` - System statistics and metrics
 - `GET /metrics` - Prometheus metrics (for scraping)
 - `GET /` - Web interface (Analytics Dashboard)
-- `GET /discover` - Query builder interface
+- `GET /p/discover` - Query builder interface
 
 For detailed query examples and advanced usage, see `DEVELOPMENT_QUERY_GUIDE.md`.
 

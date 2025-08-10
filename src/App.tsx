@@ -8,7 +8,7 @@ const AppContent = () => {
   return (
     <Switch>
       <Route path="/" component={Insight} />
-      <Route path="/discover" component={Discover} />
+      <Route path="/p/discover" component={Discover} />
     </Switch>
   );
 };
