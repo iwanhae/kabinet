@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"time"
 
 	"github.com/iwanhae/kabinet/internal/storage"
@@ -35,6 +36,13 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	mux.HandleFunc("/query", s.handleQuery)
 	mux.HandleFunc("/stats", s.handleStats)
 	mux.HandleFunc("/download", s.handleDownload)
+
+	// pprof profiling endpoints
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// Prometheus metrics
 	mux.Handle("/metrics", promhttp.Handler())
