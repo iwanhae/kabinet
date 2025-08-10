@@ -8,6 +8,7 @@ import {
   alpha,
 } from "@mui/material";
 import { styled } from "@mui/material/styles";
+import { useTimeRange } from "../hooks/useUrlParams";
 
 interface QueryFormProps {
   whereClause: string;
@@ -29,10 +30,22 @@ const QueryForm: React.FC<QueryFormProps> = ({
   onExecuteQuery,
   isLoading,
 }) => {
+  const { from, to } = useTimeRange();
+
   const handleKeyPress = (event: React.KeyboardEvent) => {
     if (event.key === "Enter" && event.ctrlKey) {
       onExecuteQuery();
     }
+  };
+
+  const handleDownload = () => {
+    const trimmedWhere = whereClause.trim() || "1=1";
+    const params = new URLSearchParams({
+      where: trimmedWhere,
+      from,
+      to,
+    });
+    window.open(`/download?${params.toString()}`, "_blank");
   };
 
   return (
@@ -104,29 +117,46 @@ const QueryForm: React.FC<QueryFormProps> = ({
             },
           }}
         />
-        <Button
-          variant="contained"
-          onClick={onExecuteQuery}
-          size="large"
-          sx={{
-            minWidth: 120,
-            height: "fit-content",
-            px: 3,
-            py: 1.5,
-            borderRadius: 1.5,
-            fontWeight: 600,
-            boxShadow: 1,
-            "&:hover": {
-              boxShadow: 3,
-            },
-          }}
-        >
-          {isLoading ? (
-            <CircularProgress size={20} color="inherit" />
-          ) : (
-            "Execute"
-          )}
-        </Button>
+        <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
+          <Button
+            variant="contained"
+            onClick={onExecuteQuery}
+            size="large"
+            sx={{
+              minWidth: 120,
+              height: "fit-content",
+              px: 2,
+              py: 1.5,
+              borderRadius: 1.5,
+              fontWeight: 600,
+              boxShadow: 1,
+              "&:hover": {
+                boxShadow: 3,
+              },
+            }}
+          >
+            {isLoading ? (
+              <CircularProgress size={20} color="inherit" />
+            ) : (
+              "Execute"
+            )}
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={handleDownload}
+            size="large"
+            sx={{
+              height: "fit-content",
+              minWidth: 120,
+              px: 2,
+              py: 0.5,
+              borderRadius: 1.5,
+              fontWeight: 600,
+            }}
+          >
+            Download
+          </Button>
+        </div>
       </QueryBox>
     </Box>
   );

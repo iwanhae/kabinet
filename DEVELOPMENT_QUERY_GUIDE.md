@@ -30,6 +30,7 @@ The API expects a JSON payload with the following fields:
 The API returns a JSON object with detailed information about the query execution.
 
 **Successful Response Structure:**
+
 - `results`: An array of JSON objects, where each object represents a row in the query result. The keys correspond to the column names in your `SELECT` statement.
 - `duration_ms`: Query execution time in milliseconds
 - `files`: Array of parquet file information that were accessed during the query
@@ -204,11 +205,13 @@ ORDER BY bucket, count DESC
 Returns system statistics and storage information.
 
 **Example Request:**
+
 ```bash
 curl http://localhost:8080/stats
 ```
 
 **Response:**
+
 ```json
 {
   "in_memory_events": 15234,
@@ -217,6 +220,15 @@ curl http://localhost:8080/stats
   "oldest_event": "2025-01-01T00:00:00Z",
   "newest_event": "2025-01-07T23:59:59Z"
 }
+```
+
+### Download Endpoint: `GET /download`
+
+Streams the result of a `WHERE` clause over a time range as gzipped JSON Lines ordered by `lastTimestamp`. The `where` clause you use in the query builder can be passed directly to this endpoint.
+
+```bash
+curl -L "http://localhost:8080/download?from=2025-01-01T00:00:00Z&to=2025-01-02T00:00:00Z&where=type%20=%20'Warning'" \
+  --output events.jsonl.gz
 ```
 
 ### Web Interface Routes
