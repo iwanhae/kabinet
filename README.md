@@ -268,6 +268,7 @@ curl -X POST http://localhost:8080/query \
 ### Additional Endpoints
 
 - `GET /stats` - System statistics and metrics
+- `GET /metrics` - Prometheus metrics (for scraping)
 - `GET /` - Web interface (Analytics Dashboard)
 - `GET /discover` - Query builder interface
 

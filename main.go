@@ -13,6 +13,7 @@ import (
 	"github.com/iwanhae/kube-event-analyzer/internal/api"
 	"github.com/iwanhae/kube-event-analyzer/internal/collector"
 	"github.com/iwanhae/kube-event-analyzer/internal/config"
+	"github.com/iwanhae/kube-event-analyzer/internal/metrics"
 	"github.com/iwanhae/kube-event-analyzer/internal/storage"
 )
 
@@ -21,6 +22,9 @@ var distFS embed.FS
 
 func main() {
 	cfg := config.Load()
+
+	// Initialize metrics registry and counters
+	metrics.Init()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -107,6 +111,9 @@ func runCollector(ctx context.Context, storage *storage.Storage) {
 				log.Println("collector: event watcher channel closed. collector is stopping.")
 				return
 			}
+
+			// track collected event
+			metrics.EventsCollected.Inc()
 
 			// if the event is missing some fields, set them to the creation timestamp
 			if event.FirstTimestamp.IsZero() {

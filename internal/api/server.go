@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/iwanhae/kube-event-analyzer/internal/storage"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Server holds the dependencies for the API server.
@@ -31,6 +32,9 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 	// API Handler
 	mux.HandleFunc("/query", s.handleQuery)
 	mux.HandleFunc("/stats", s.handleStats)
+
+	// Prometheus metrics
+	mux.Handle("/metrics", promhttp.Handler())
 
 	// Frontend Handler
 	staticFS, err := fs.Sub(distFS, "dist")
