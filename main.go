@@ -10,11 +10,11 @@ import (
 	"sync"
 	"syscall"
 
-    "github.com/iwanhae/kabinet/internal/api"
-    "github.com/iwanhae/kabinet/internal/collector"
-    "github.com/iwanhae/kabinet/internal/config"
-    "github.com/iwanhae/kabinet/internal/metrics"
-    "github.com/iwanhae/kabinet/internal/storage"
+	"github.com/iwanhae/kabinet/internal/api"
+	"github.com/iwanhae/kabinet/internal/collector"
+	"github.com/iwanhae/kabinet/internal/config"
+	"github.com/iwanhae/kabinet/internal/metrics"
+	"github.com/iwanhae/kabinet/internal/storage"
 )
 
 //go:embed all:dist
