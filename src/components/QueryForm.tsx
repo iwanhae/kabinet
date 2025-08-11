@@ -38,15 +38,15 @@ const QueryForm: React.FC<QueryFormProps> = ({
     }
   };
 
-  const handleDownload = () => {
+  const downloadUrl = React.useMemo(() => {
     const trimmedWhere = whereClause.trim() || "1=1";
     const params = new URLSearchParams({
       where: trimmedWhere,
       from,
       to,
     });
-    window.open(`/download?${params.toString()}`, "_blank");
-  };
+    return `/download?${params.toString()}`;
+  }, [whereClause, from, to]);
 
   return (
     <Box mb={4}>
@@ -142,8 +142,11 @@ const QueryForm: React.FC<QueryFormProps> = ({
             )}
           </Button>
           <Button
+            component="a"
+            href={downloadUrl}
+            target="_blank"
+            rel="noopener"
             variant="outlined"
-            onClick={handleDownload}
             size="large"
             sx={{
               height: "fit-content",
