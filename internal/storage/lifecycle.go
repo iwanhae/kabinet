@@ -182,7 +182,7 @@ func (s *Storage) CompactParquetFiles(ctx context.Context, compactThresholdBytes
 
 	var parquetFiles []os.DirEntry
 	for _, file := range files {
-		if !file.IsDir() && strings.HasSuffix(file.Name(), ".parquet") {
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".parquet") && strings.HasPrefix(file.Name(), "events_") {
 			parquetFiles = append(parquetFiles, file)
 		}
 	}
@@ -301,7 +301,7 @@ func (s *Storage) EnforceRetention(limitBytes int64) error {
 
 	var parquetFiles []os.DirEntry
 	for _, file := range files {
-		if !file.IsDir() && strings.HasSuffix(file.Name(), ".parquet") {
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".parquet") && strings.HasPrefix(file.Name(), "events_") {
 			parquetFiles = append(parquetFiles, file)
 		}
 	}

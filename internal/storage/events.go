@@ -168,7 +168,7 @@ func (s *Storage) buildEventsQuery(query string, start, end time.Time) (string, 
 	var latestParquetMaxTs int64
 
 	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".parquet") {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".parquet") || !strings.HasPrefix(file.Name(), "events_") {
 			continue
 		}
 
