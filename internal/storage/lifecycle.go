@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -243,7 +244,7 @@ func (s *Storage) mergeFileBatch(ctx context.Context, batch []os.DirEntry) error
 		return fmt.Errorf("at least two files are required for a merge, got %d", len(batch))
 	}
 
-	// Prepare file paths for SQL query and deletion
+	// Prepare file paths for merger command
 	filesToMergePaths := make([]string, len(batch))
 	for i, file := range batch {
 		filesToMergePaths[i] = filepath.Join(s.dataDir, file.Name())
@@ -258,21 +259,31 @@ func (s *Storage) mergeFileBatch(ctx context.Context, batch []os.DirEntry) error
 
 	newFileName := fmt.Sprintf("events_%d_%d.parquet", firstFileMinTs, lastFileMaxTs)
 	newFilePath := filepath.Join(s.dataDir, newFileName)
-	log.Printf("storage: merging %d files into %s", len(batch), newFileName)
+	log.Printf("storage: merging %d files into %s using external merger process", len(batch), newFileName)
 
-	// Build and execute the merge query
-	quotedFiles := make([]string, len(filesToMergePaths))
-	for i, p := range filesToMergePaths {
-		quotedFiles[i] = fmt.Sprintf("'%s'", p)
+	// Find merger binary (from PATH or /usr/local/bin)
+	mergerPath, err := exec.LookPath("merger")
+	if err != nil {
+		// Fallback to common installation path in Docker
+		mergerPath = "/usr/local/bin/merger"
+		if _, err := os.Stat(mergerPath); err != nil {
+			return fmt.Errorf("merger binary not found in PATH or /usr/local/bin: %w", err)
+		}
 	}
-	// Important: order by lastTimestamp to keep data sorted in the new parquet file.
-	copySQL := fmt.Sprintf(`COPY (SELECT * FROM read_parquet([%s]) ORDER BY lastTimestamp) TO '%s' (FORMAT 'parquet', COMPRESSION 'zstd');`,
-		strings.Join(quotedFiles, ", "), newFilePath)
 
-	if _, err := s.db.ExecContext(ctx, copySQL); err != nil {
-		// Cleanup partially written file if copy fails
+	// Build command arguments: merger -o output.parquet input1.parquet input2.parquet ...
+	args := []string{"-o", newFilePath}
+	args = append(args, filesToMergePaths...)
+
+	// Execute merger as a separate process
+	cmd := exec.CommandContext(ctx, mergerPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		// Cleanup partially written file if merge fails
 		os.Remove(newFilePath)
-		return fmt.Errorf("failed to execute merge copy: %w", err)
+		return fmt.Errorf("failed to execute merger command: %w", err)
 	}
 
 	// Merge successful, now delete original files

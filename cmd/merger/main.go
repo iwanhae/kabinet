@@ -64,9 +64,9 @@ func mergeParquetFiles(inputFiles []string, outputFile string) error {
 	}
 	filesArray := fmt.Sprintf("[%s]", strings.Join(quotedFiles, ", "))
 
-	// Build the COPY query
+	// Build the COPY query with ORDER BY to keep data sorted
 	query := fmt.Sprintf(
-		"COPY (FROM read_parquet(%s)) TO '%s' (FORMAT parquet, COMPRESSION zstd);",
+		"COPY (SELECT * FROM read_parquet(%s) ORDER BY lastTimestamp) TO '%s' (FORMAT parquet, COMPRESSION zstd);",
 		filesArray,
 		strings.ReplaceAll(outputFile, "'", "''"),
 	)
