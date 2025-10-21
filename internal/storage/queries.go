@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS kube_events (
 		namespace VARCHAR,
 		uid VARCHAR,
 		resourceVersion VARCHAR,
-		creationTimestamp TIMESTAMP
+		creationTimestamp TIMESTAMPTZ
 	),
 
 	-- From corev1.Event
@@ -31,14 +31,14 @@ CREATE TABLE IF NOT EXISTS kube_events (
 		component VARCHAR,
 		host VARCHAR
 	),
-	firstTimestamp TIMESTAMP,
-	lastTimestamp TIMESTAMP,
+	firstTimestamp TIMESTAMPTZ,
+	lastTimestamp TIMESTAMPTZ,
 	"count" INTEGER,
 	"type" VARCHAR,
-	eventTime TIMESTAMP,
+	eventTime TIMESTAMPTZ,
 	series STRUCT(
 		"count" INTEGER,
-		lastObservedTime TIMESTAMP
+		lastObservedTime TIMESTAMPTZ
 	) DEFAULT NULL,
 	action VARCHAR,
 	related STRUCT(

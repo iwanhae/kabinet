@@ -31,8 +31,6 @@ const EventsTimelineChart: React.FC<Props> = ({ where = "1=1" }) => {
         COUNT(*) AS count
       FROM $events 
       WHERE ${where}
-      AND lastTimestamp >= '${from}'
-      AND lastTimestamp <= '${to}'
       GROUP BY time_bucket, type
       ORDER BY time_bucket, type
     `;

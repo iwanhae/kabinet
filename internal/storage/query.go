@@ -40,7 +40,7 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 func buildFromClause(relevantFiles []string, includeKubeEvents bool, from, to time.Time) (string, error) {
 	var fromSources []string
 	if includeKubeEvents {
-		fromSources = append(fromSources, fmt.Sprintf("SELECT * FROM kube_events WHERE lastTimestamp BETWEEN '%s' AND '%s'", from.Format(time.RFC3339), to.Format(time.RFC3339)))
+		fromSources = append(fromSources, fmt.Sprintf("SELECT * FROM kube_events WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s'", from.Format(time.RFC3339), to.Format(time.RFC3339)))
 	}
 
 	if len(relevantFiles) > 0 {
@@ -48,7 +48,7 @@ func buildFromClause(relevantFiles []string, includeKubeEvents bool, from, to ti
 		for i, p := range relevantFiles {
 			quotedFiles[i] = fmt.Sprintf("'%s'", p)
 		}
-		parquetSource := fmt.Sprintf("SELECT * FROM read_parquet([%s]) WHERE lastTimestamp BETWEEN '%s' AND '%s'", strings.Join(quotedFiles, ", "), from.Format(time.RFC3339), to.Format(time.RFC3339))
+		parquetSource := fmt.Sprintf("SELECT * FROM read_parquet([%s]) WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s'", strings.Join(quotedFiles, ", "), from.Format(time.RFC3339), to.Format(time.RFC3339))
 		fromSources = append(fromSources, parquetSource)
 	}
 
