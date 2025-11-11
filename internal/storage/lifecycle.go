@@ -17,10 +17,10 @@ import (
 // LifecycleManager manages data lifecycle with periodic archiving and retention enforcement
 func (s *Storage) LifecycleManager(ctx context.Context, storageLimitBytes int64) {
 	log.Printf("storage: starting data lifecycle manager. check_interval=1m, archive_row_count_threshold=%d, storage_limit_bytes=%d",
-		1228800, storageLimitBytes)
+		122880, storageLimitBytes)
 
-	// Fixed row count threshold: 1,228,800 rows
-	archiveRowCountThreshold := int64(1228800)
+	// Fixed row count threshold: 122,880 rows
+	archiveRowCountThreshold := int64(122880)
 
 	// Ticker for periodic maintenance (compaction and retention)
 	ticker := time.NewTicker(1 * time.Minute)
