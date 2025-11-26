@@ -149,6 +149,25 @@ graph LR
     ./kabinet
     ```
 
+### Kubernetes Deployment (Helm)
+
+The easiest way to deploy Kabinet on Kubernetes is using the provided Helm chart:
+
+```bash
+# Install with default settings
+helm install kabinet ./chart/kabinet
+
+# Install with custom configuration
+helm install kabinet ./chart/kabinet \
+  --set kabinet.storageLimitGB=50 \
+  --set kabinet.persistence.size=100Gi
+
+# Access via port-forward
+kubectl port-forward svc/kabinet 8080:8080
+```
+
+For detailed Helm installation instructions, see [HELM_INSTALL.md](HELM_INSTALL.md).
+
 ### Docker Deployment
 
 The application can be configured via environment variables. See the **Configuration** section below for details.
