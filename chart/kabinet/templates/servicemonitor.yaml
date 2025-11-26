@@ -13,6 +13,7 @@ spec:
     matchLabels:
       {{- include "kabinet.selectorLabels" . | nindent 6 }}
   endpoints:
+  # Kabinet exposes Prometheus metrics at /metrics endpoint
   - port: http
     path: /metrics
     interval: {{ .Values.serviceMonitor.interval }}

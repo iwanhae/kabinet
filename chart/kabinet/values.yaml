@@ -105,7 +105,7 @@ kabinet:
   storageLimitGB: 10
   # Port on which the API server will listen
   listenPort: 8080
-  
+
   # Persistence configuration for event data
   persistence:
     enabled: true
