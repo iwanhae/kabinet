@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import type { Message, InvestigationConfig, InvestigationStatus, AgentPlan } from '../../types/agent';
+import { useHistory, type SavedSession } from './useHistory';
 import { createOpenAIClient } from '../../lib/agent/openai';
 import { executeKubeQuery } from '../../lib/agent/kube';
 import { SYSTEM_PROMPT } from '../../lib/agent/prompts';
@@ -11,10 +12,29 @@ export const useInvestigation = (config: InvestigationConfig) => {
     const [currentHypothesis, setCurrentHypothesis] = useState<string>('');
     const [currentThought, setCurrentThought] = useState<string>('');
     const [currentQuery, setCurrentQuery] = useState<AgentPlan['query'] | undefined>(undefined);
+    const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
 
     // Refs to access latest state in async loop without dependency issues
     const messagesRef = useRef<Message[]>([]);
     const stopRef = useRef<boolean>(false);
+
+    // History management
+    const { saveSession } = useHistory();
+
+    // Auto-save effect
+    useEffect(() => {
+        if (messages.length > 0) {
+            const userMsg = messages.find(m => m.role === 'user');
+            const title = userMsg ? userMsg.content.slice(0, 50) + (userMsg.content.length > 50 ? '...' : '') : 'New Conversation';
+
+            saveSession({
+                id: sessionId,
+                timestamp: Date.now(),
+                title,
+                messages
+            });
+        }
+    }, [messages, sessionId, saveSession]);
 
     const addMessage = (msg: Message) => {
         setMessages(prev => {
@@ -28,6 +48,28 @@ export const useInvestigation = (config: InvestigationConfig) => {
         stopRef.current = true;
         setStatus('idle'); // Or 'cancelled'
     }, []);
+
+    const clearSession = useCallback(() => {
+        stop();
+        setMessages([]);
+        messagesRef.current = [];
+        setStatus('idle');
+        setCurrentHypothesis('');
+        setCurrentThought('');
+        setCurrentQuery(undefined);
+        setSessionId(crypto.randomUUID());
+    }, [stop]);
+
+    const loadSession = useCallback((session: SavedSession) => {
+        stop();
+        setSessionId(session.id);
+        setMessages(session.messages);
+        messagesRef.current = session.messages;
+        setStatus('idle'); // Or 'complete' depending on state, but idle is safer for now
+        setCurrentHypothesis('');
+        setCurrentThought('');
+        setCurrentQuery(undefined);
+    }, [stop]);
 
     const start = useCallback(async (userProblem: string) => {
         if (!config.openaiApiKey) {
@@ -141,6 +183,8 @@ export const useInvestigation = (config: InvestigationConfig) => {
         currentThought,
         currentQuery,
         start,
-        stop
+        stop,
+        clearSession,
+        loadSession
     };
 };
