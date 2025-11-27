@@ -15,6 +15,7 @@ import InsightsIcon from "@mui/icons-material/Insights";
 import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import { useTheme } from "../contexts/ThemeContext";
 import { TimeRangePicker } from "./TimeRangePicker";
 import { useNavigation } from "../hooks/useNavigation";
@@ -72,6 +73,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         },
       }),
       icon: <TravelExploreIcon />,
+    },
+    {
+      text: "Agent",
+      href: "/agent",
+      icon: <AutoAwesomeIcon />,
     },
   ];
 

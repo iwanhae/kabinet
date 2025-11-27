@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-app: #131314;
+  --color-bg-panel: #1e1f20;
+  --color-bg-input: #1e1f20;
+
+  --color-text-primary: #e3e3e3;
+  --color-text-secondary: #c4c7c5;
+  --color-text-tertiary: #444746;
+
+  --color-accent-primary: #a8c7fa;
+  --color-accent-secondary: #c4c7c5;
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-bg-app text-text-primary font-sans antialiased h-screen overflow-hidden;
+}
+
+#root {
+  @apply h-full flex flex-col;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-700 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-600;
+}
