@@ -77,9 +77,21 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 		http.Redirect(w, r, target, http.StatusMovedPermanently)
 	})
 
+	// CORS handler to allow all origins
+	corsMux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+
 	s.server = &http.Server{
 		Addr:    ":" + port,
-		Handler: mux,
+		Handler: corsMux,
 	}
 	return s
 }
