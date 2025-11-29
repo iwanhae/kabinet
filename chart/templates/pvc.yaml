@@ -1,0 +1,21 @@
+{{- if and .Values.kabinet.persistence.enabled (not .Values.kabinet.persistence.existingClaim) -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kabinet.fullname" . }}-data
+  labels:
+    {{- include "kabinet.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.kabinet.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.kabinet.persistence.size }}
+  {{- if .Values.kabinet.persistence.storageClass }}
+  {{- if (eq "-" .Values.kabinet.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.kabinet.persistence.storageClass }}
+  {{- end }}
+  {{- end }}
+{{- end }}

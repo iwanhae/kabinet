@@ -1,0 +1,18 @@
+apiVersion: v2
+name: kabinet
+description: A Helm chart for Kabinet - Kubernetes event filing cabinet
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/iwanhae/kabinet
+sources:
+  - https://github.com/iwanhae/kabinet
+maintainers:
+  - name: iwanhae
+    url: https://github.com/iwanhae
+keywords:
+  - kubernetes
+  - events
+  - monitoring
+  - analytics
+  - duckdb

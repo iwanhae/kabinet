@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 main
+
+# Helm packaged charts
+*.tgz
