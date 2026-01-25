@@ -13,64 +13,64 @@ func TestBuildFromClause(t *testing.T) {
 	toStr := to.Format(time.RFC3339)
 
 	testCases := []struct {
-		name              string
-		relevantFiles     []string
-		includeKubeEvents bool
-		from              time.Time
-		to                time.Time
-		expectedClause    string
-		expectError       bool
+		name           string
+		jsonlFiles     []string
+		parquetFiles   []string
+		from           time.Time
+		to             time.Time
+		expectedClause string
+		expectError    bool
 	}{
 		{
-			name:              "Only kube_events",
-			relevantFiles:     []string{},
-			includeKubeEvents: true,
-			from:              from,
-			to:                to,
-			expectedClause:    fmt.Sprintf("(SELECT * FROM kube_events WHERE lastTimestamp BETWEEN '%s' AND '%s')", fromStr, toStr),
-			expectError:       false,
+			name:           "Only JSONL files",
+			jsonlFiles:     []string{"/data/events_123456.jsonl"},
+			parquetFiles:   []string{},
+			from:           from,
+			to:             to,
+			expectedClause: fmt.Sprintf("(SELECT * FROM read_json_auto(['/data/events_123456.jsonl']) WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s')", fromStr, toStr),
+			expectError:    false,
 		},
 		{
-			name:              "Only single parquet file",
-			relevantFiles:     []string{"/data/file1.parquet"},
-			includeKubeEvents: false,
-			from:              from,
-			to:                to,
-			expectedClause:    fmt.Sprintf("(SELECT * FROM read_parquet(['/data/file1.parquet']) WHERE lastTimestamp BETWEEN '%s' AND '%s')", fromStr, toStr),
-			expectError:       false,
+			name:           "Only single parquet file",
+			jsonlFiles:     []string{},
+			parquetFiles:   []string{"/data/file1.parquet"},
+			from:           from,
+			to:             to,
+			expectedClause: fmt.Sprintf("(SELECT * FROM read_parquet(['/data/file1.parquet']) WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s')", fromStr, toStr),
+			expectError:    false,
 		},
 		{
-			name:              "Only multiple parquet files",
-			relevantFiles:     []string{"/data/file1.parquet", "/data/file2.parquet"},
-			includeKubeEvents: false,
-			from:              from,
-			to:                to,
-			expectedClause:    fmt.Sprintf("(SELECT * FROM read_parquet(['/data/file1.parquet', '/data/file2.parquet']) WHERE lastTimestamp BETWEEN '%s' AND '%s')", fromStr, toStr),
-			expectError:       false,
+			name:           "Only multiple parquet files",
+			jsonlFiles:     []string{},
+			parquetFiles:   []string{"/data/file1.parquet", "/data/file2.parquet"},
+			from:           from,
+			to:             to,
+			expectedClause: fmt.Sprintf("(SELECT * FROM read_parquet(['/data/file1.parquet', '/data/file2.parquet']) WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s')", fromStr, toStr),
+			expectError:    false,
 		},
 		{
-			name:              "kube_events and multiple parquet files",
-			relevantFiles:     []string{"/data/file1.parquet", "/data/file2.parquet"},
-			includeKubeEvents: true,
-			from:              from,
-			to:                to,
-			expectedClause:    fmt.Sprintf("(SELECT * FROM kube_events WHERE lastTimestamp BETWEEN '%s' AND '%s' UNION ALL BY NAME SELECT * FROM read_parquet(['/data/file1.parquet', '/data/file2.parquet']) WHERE lastTimestamp BETWEEN '%s' AND '%s')", fromStr, toStr, fromStr, toStr),
-			expectError:       false,
+			name:           "JSONL and multiple parquet files",
+			jsonlFiles:     []string{"/data/events_123456.jsonl", "/data/events_123457.jsonl"},
+			parquetFiles:   []string{"/data/file1.parquet", "/data/file2.parquet"},
+			from:           from,
+			to:             to,
+			expectedClause: fmt.Sprintf("(SELECT * FROM read_json_auto(['/data/events_123456.jsonl', '/data/events_123457.jsonl']) WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s' UNION ALL BY NAME SELECT * FROM read_parquet(['/data/file1.parquet', '/data/file2.parquet']) WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s')", fromStr, toStr, fromStr, toStr),
+			expectError:    false,
 		},
 		{
-			name:              "No sources",
-			relevantFiles:     []string{},
-			includeKubeEvents: false,
-			from:              from,
-			to:                to,
-			expectedClause:    "",
-			expectError:       true,
+			name:           "No sources",
+			jsonlFiles:     []string{},
+			parquetFiles:   []string{},
+			from:           from,
+			to:             to,
+			expectedClause: "",
+			expectError:    true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			clause, err := buildFromClause(tc.relevantFiles, tc.includeKubeEvents, tc.from, tc.to)
+			clause, err := buildFromClause(tc.jsonlFiles, tc.parquetFiles, tc.from, tc.to)
 
 			if tc.expectError {
 				if err == nil {

@@ -60,95 +60,19 @@ func (s *Storage) runBatchInserter(ctx context.Context) {
 	}
 }
 
-// AppendEvents inserts a batch of Kubernetes events into the database
+// AppendEvents writes a batch of Kubernetes events to JSONL files
 func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 	if len(k8sEvents) == 0 {
 		return nil
 	}
 
-	// BEGIN TRANSACTION
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err) // TODO: retry?
-	}
-	defer tx.Rollback()
-
-	for _, k8sEvent := range k8sEvents {
-		var series any
-		if k8sEvent.Series != nil {
-			series = map[string]any{
-				"count":            k8sEvent.Series.Count,
-				"lastObservedTime": k8sEvent.Series.LastObservedTime.Time,
-			}
-		} else {
-			series = nil
-		}
-
-		var related any
-		if k8sEvent.Related != nil {
-			related = map[string]any{
-				"kind":            k8sEvent.Related.Kind,
-				"namespace":       k8sEvent.Related.Namespace,
-				"name":            k8sEvent.Related.Name,
-				"uid":             string(k8sEvent.Related.UID),
-				"apiVersion":      k8sEvent.Related.APIVersion,
-				"resourceVersion": k8sEvent.Related.ResourceVersion,
-				"fieldPath":       k8sEvent.Related.FieldPath,
-			}
-		} else {
-			related = nil
-		}
-
-		args := []any{
-			k8sEvent.Kind,
-			k8sEvent.APIVersion,
-			map[string]any{
-				"name":              k8sEvent.ObjectMeta.Name,
-				"namespace":         k8sEvent.ObjectMeta.Namespace,
-				"uid":               string(k8sEvent.ObjectMeta.UID),
-				"resourceVersion":   k8sEvent.ObjectMeta.ResourceVersion,
-				"creationTimestamp": k8sEvent.ObjectMeta.CreationTimestamp.Time,
-			},
-			map[string]any{
-				"kind":            k8sEvent.InvolvedObject.Kind,
-				"namespace":       k8sEvent.InvolvedObject.Namespace,
-				"name":            k8sEvent.InvolvedObject.Name,
-				"uid":             string(k8sEvent.InvolvedObject.UID),
-				"apiVersion":      k8sEvent.InvolvedObject.APIVersion,
-				"resourceVersion": k8sEvent.InvolvedObject.ResourceVersion,
-				"fieldPath":       k8sEvent.InvolvedObject.FieldPath,
-			},
-			k8sEvent.Reason,
-			k8sEvent.Message,
-			map[string]any{
-				"component": k8sEvent.Source.Component,
-				"host":      k8sEvent.Source.Host,
-			},
-			k8sEvent.FirstTimestamp.Time,
-			k8sEvent.LastTimestamp.Time,
-			k8sEvent.Count,
-			k8sEvent.Type,
-			k8sEvent.EventTime.Time,
-			series,
-			k8sEvent.Action,
-			related,
-			k8sEvent.ReportingController,
-			k8sEvent.ReportingInstance,
-		}
-		placeholder := "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-		query := fmt.Sprintf("INSERT OR IGNORE INTO kube_events VALUES %s", placeholder)
-		_, err := tx.Exec(query, args...)
-		if err != nil {
-			return fmt.Errorf("failed to batch insert events: %w", err)
+	for _, event := range k8sEvents {
+		if err := s.jsonlWriter.WriteEvent(event); err != nil {
+			return fmt.Errorf("failed to write event to JSONL: %w", err)
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	log.Printf("storage: inserted %d events into kube_events", len(k8sEvents))
-
+	log.Printf("storage: wrote %d events to JSONL", len(k8sEvents))
 	return nil
 }
 
@@ -164,60 +88,64 @@ func (s *Storage) buildEventsQuery(query string, start, end time.Time) (string, 
 	queryStartTs := start.Unix()
 	queryEndTs := end.Unix()
 
-	var relevantFiles []ParquetFileInfo
-	var latestParquetMaxTs int64
+	var jsonlFiles []string
+	var parquetFiles []ParquetFileInfo
 
 	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".parquet") || !strings.HasPrefix(file.Name(), "events_") {
+		if file.IsDir() {
 			continue
 		}
 
-		info, err := file.Info()
-		if err != nil {
-			log.Printf("storage: could not get file info for %s: %v", file.Name(), err)
+		// Handle JSONL files
+		if strings.HasSuffix(file.Name(), ".jsonl") && strings.HasPrefix(file.Name(), "events_") {
+			// For simplicity, include all JSONL files in queries
+			// The WHERE clause will filter by time range
+			jsonlFiles = append(jsonlFiles, filepath.Join(s.dataDir, file.Name()))
 			continue
 		}
 
-		minTs, maxTs, ok := parseParquetFilename(file.Name())
-		if !ok {
-			log.Printf("storage: could not parse filename %s, including it just in case.", file.Name())
-			relevantFiles = append(relevantFiles, ParquetFileInfo{
-				Path: filepath.Join(s.dataDir, file.Name()),
-				Size: info.Size(),
-			})
-			continue
-		}
+		// Handle Parquet files
+		if strings.HasSuffix(file.Name(), ".parquet") && strings.HasPrefix(file.Name(), "events_") {
+			info, err := file.Info()
+			if err != nil {
+				log.Printf("storage: could not get file info for %s: %v", file.Name(), err)
+				continue
+			}
 
-		if maxTs > latestParquetMaxTs {
-			latestParquetMaxTs = maxTs
-		}
+			minTs, maxTs, ok := parseParquetFilename(file.Name())
+			if !ok {
+				log.Printf("storage: could not parse filename %s, including it just in case.", file.Name())
+				parquetFiles = append(parquetFiles, ParquetFileInfo{
+					Path: filepath.Join(s.dataDir, file.Name()),
+					Size: info.Size(),
+				})
+				continue
+			}
 
-		if maxTs >= queryStartTs && minTs <= queryEndTs {
-			relevantFiles = append(relevantFiles, ParquetFileInfo{
-				Path: filepath.Join(s.dataDir, file.Name()),
-				Size: info.Size(),
-			})
+			// Only include parquet files that overlap with query time range
+			if maxTs >= queryStartTs && minTs <= queryEndTs {
+				parquetFiles = append(parquetFiles, ParquetFileInfo{
+					Path: filepath.Join(s.dataDir, file.Name()),
+					Size: info.Size(),
+				})
+			}
 		}
 	}
 
-	includeKubeEvents := true
-	if latestParquetMaxTs > 0 && queryEndTs < latestParquetMaxTs {
-		includeKubeEvents = false
+	// Build file paths for buildFromClause
+	parquetFilePaths := make([]string, len(parquetFiles))
+	for i, f := range parquetFiles {
+		parquetFilePaths[i] = f.Path
 	}
 
-	relevantFilePaths := make([]string, len(relevantFiles))
-	for i, f := range relevantFiles {
-		relevantFilePaths[i] = f.Path
-	}
-
-	fromClause, err := buildFromClause(relevantFilePaths, includeKubeEvents, start, end)
+	fromClause, err := buildFromClause(jsonlFiles, parquetFilePaths, start, end)
 	if err != nil {
 		log.Println("storage: query time range resulted in no data sources. returning empty result.")
 		return "", nil, fmt.Errorf("query time range resulted in no data sources")
 	}
 
 	finalQuery := strings.Replace(query, "$events", fromClause, 1)
-	return finalQuery, relevantFiles, nil
+	return finalQuery, parquetFiles, nil
 }
 
 // StreamEvents executes the built events query and streams each row to the provided handler
