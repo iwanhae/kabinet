@@ -11,7 +11,7 @@ export interface InvestigationConfig {
 }
 
 export interface QueryResult {
-  results?: any[];
+  results?: unknown[];
   error?: string;
 }
 
@@ -27,6 +27,7 @@ export interface AgentPlan {
   data?: {
     type: "table" | "bar_chart" | "line_chart";
     title: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Dynamic data from external API
     content: any;
   };
 }

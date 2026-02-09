@@ -98,7 +98,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   if (!isUser) {
     try {
       parsedPlan = JSON.parse(message.content);
-    } catch (e) {
+    } catch {
       // Not JSON, render as text
     }
   }

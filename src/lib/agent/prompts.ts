@@ -81,7 +81,7 @@ You MUST respond with a single JSON object. No other text or explanation.
       }
     }
     \`\`\`
-4.  **System**: (Returns a summary: "Query returned 1 row... First row summary: {\"involvedObject.name\": \"app-migration-pod-abc123\", \"source.host\": \"worker-node-001\", ...}")
+4.  **System**: (Returns a summary: "Query returned 1 row... First row summary: {"involvedObject.name": "app-migration-pod-abc123", "source.host": "worker-node-001", ...}")
 5.  **AI**:
     \`\`\`json
     {
@@ -120,7 +120,7 @@ You MUST respond with a single JSON object. No other text or explanation.
       }
     }
     \`\`\`
-4.  **System**: (Returns a summary: "Query returned 5 rows. Columns: reason, count. First row summary: {\"reason\": \"FailedMount\", \"count\": 1234}")
+4.  **System**: (Returns a summary: "Query returned 5 rows. Columns: reason, count. First row summary: {"reason": "FailedMount", "count": 1234}")
 5.  **AI**:
     \`\`\`json
     {
@@ -133,7 +133,7 @@ You MUST respond with a single JSON object. No other text or explanation.
       }
     }
     \`\`\`
-6.  **System**: (Returns a summary: "Query returned 1 row... First row summary: {\"source.host\": \"worker-node-002\", ...}")
+6.  **System**: (Returns a summary: "Query returned 1 row... First row summary: {"source.host": "worker-node-002", ...}")
 7.  **AI**:
     \`\`\`json
     {

@@ -134,7 +134,7 @@ export const useInvestigation = (config: InvestigationConfig) => {
               role: "system",
               content: `The current UTC time is ${currentTime}. Use this to construct your query's time range.`,
             },
-          ] as any[]; // Type cast for OpenAI SDK compatibility
+          ] as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any -- Type cast for OpenAI SDK compatibility
 
           // 1. Get AI Plan
           const completion = await client.chat.completions.create({
@@ -192,9 +192,11 @@ export const useInvestigation = (config: InvestigationConfig) => {
           addMessage({ role: "system", content: "Maximum turns reached." });
           setStatus("complete");
         }
-      } catch (error: any) {
+      } catch (error) {
         console.error("Investigation error:", error);
-        addMessage({ role: "system", content: `Error: ${error.message}` });
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        addMessage({ role: "system", content: `Error: ${errorMessage}` });
         setStatus("error");
       }
     },

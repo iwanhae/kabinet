@@ -29,7 +29,8 @@ export const executeKubeQuery = async (
 
     const data = await response.json();
     return data;
-  } catch (e: any) {
-    return { error: `Network error: ${e.message}` };
+  } catch (e) {
+    const errorMessage = e instanceof Error ? e.message : "Unknown error";
+    return { error: `Network error: ${errorMessage}` };
   }
 };

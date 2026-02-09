@@ -30,15 +30,23 @@ interface DataVisualizerProps {
   data: {
     type: "table" | "bar_chart" | "line_chart";
     title: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Dynamic data from external API
     content: any[];
   };
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+};
 
 export const DataVisualizer: React.FC<DataVisualizerProps> = ({ data }) => {
   if (!data.content || data.content.length === 0) return null;
 
   const renderTable = () => {
-    const headers = Object.keys(data.content[0]);
+    const firstRow = data.content[0];
+    if (!isRecord(firstRow)) return null;
+
+    const headers = Object.keys(firstRow);
     return (
       <TableContainer
         component={Paper}
@@ -59,18 +67,21 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({ data }) => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {data.content.map((row, idx) => (
-              <TableRow key={idx} hover>
-                {headers.map((header) => (
-                  <TableCell
-                    key={`${idx}-${header}`}
-                    sx={{ fontFamily: "monospace" }}
-                  >
-                    {String(row[header])}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
+            {data.content.map((row, idx) => {
+              if (!isRecord(row)) return null;
+              return (
+                <TableRow key={idx} hover>
+                  {headers.map((header) => (
+                    <TableCell
+                      key={`${idx}-${header}`}
+                      sx={{ fontFamily: "monospace" }}
+                    >
+                      {String(row[header])}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>
@@ -78,13 +89,16 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({ data }) => {
   };
 
   const renderBarChart = () => {
-    const keys = Object.keys(data.content[0]).filter(
+    const firstRow = data.content[0];
+    if (!isRecord(firstRow)) return null;
+
+    const keys = Object.keys(firstRow).filter(
       (k) => k !== "label" && k !== "name" && k !== "date",
     );
     const labelKey =
-      Object.keys(data.content[0]).find(
+      Object.keys(firstRow).find(
         (k) => k === "label" || k === "name" || k === "date",
-      ) || Object.keys(data.content[0])[0];
+      ) || Object.keys(firstRow)[0];
 
     return (
       <Box sx={{ height: 300, width: "100%", mt: 2 }}>
@@ -116,13 +130,16 @@ export const DataVisualizer: React.FC<DataVisualizerProps> = ({ data }) => {
   };
 
   const renderLineChart = () => {
-    const keys = Object.keys(data.content[0]).filter(
+    const firstRow = data.content[0];
+    if (!isRecord(firstRow)) return null;
+
+    const keys = Object.keys(firstRow).filter(
       (k) => k !== "label" && k !== "name" && k !== "date",
     );
     const labelKey =
-      Object.keys(data.content[0]).find(
+      Object.keys(firstRow).find(
         (k) => k === "label" || k === "name" || k === "date",
-      ) || Object.keys(data.content[0])[0];
+      ) || Object.keys(firstRow)[0];
 
     return (
       <Box sx={{ height: 300, width: "100%", mt: 2 }}>
