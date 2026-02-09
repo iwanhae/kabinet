@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Typography, Box, Alert, CircularProgress } from "@mui/material";
 import { useSearch } from "wouter";
 import { invalidateEventsQuery, useEventsQuery } from "../hooks/useEventsQuery";
-import { useQueryParams } from "../hooks/useUrlParams";
+import { useQueryParams, useUrlParams } from "../hooks/useUrlParams";
 import type { EventResult } from "../types/events";
 import QueryForm from "../components/QueryForm";
 import EventsTable from "../components/EventsTable";
@@ -11,11 +11,26 @@ import EventsTimelineChart from "../components/EventsTimelineChart";
 
 const Discover: React.FC = () => {
   const { setWhereClause: updateUrlWhereClause } = useQueryParams();
+  const { updateParams } = useUrlParams();
   const search = useSearch();
   const [whereClause, setWhereClause] = useState("");
   const [executedQuery, setExecutedQuery] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventResult | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [resourceVersionQuery, setResourceVersionQuery] = useState<
+    string | null
+  >(null);
+
+  // 쿼리가 실행된 경우에만 데이터를 가져옴
+  const query = executedQuery
+    ? `SELECT * FROM $events WHERE ${executedQuery} ORDER BY lastTimestamp DESC LIMIT 100`
+    : null;
+
+  const { data, error, isLoading } = useEventsQuery<EventResult>(query);
+
+  // Query for specific event by resourceVersion (for shareable URLs)
+  const { data: resourceVersionData } =
+    useEventsQuery<EventResult>(resourceVersionQuery);
 
   // URL의 where 파라미터를 읽어서 executedQuery 초기값으로 설정
   useEffect(() => {
@@ -28,12 +43,27 @@ const Discover: React.FC = () => {
     }
   }, [search]);
 
-  // 쿼리가 실행된 경우에만 데이터를 가져옴
-  const query = executedQuery
-    ? `SELECT * FROM $events WHERE ${executedQuery} ORDER BY lastTimestamp DESC LIMIT 100`
-    : null;
+  // Handle resourceVersion URL parameter to auto-open drawer
+  useEffect(() => {
+    const searchParams = new URLSearchParams(search);
+    const resourceVersionParam = searchParams.get("resourceVersion");
 
-  const { data, error, isLoading } = useEventsQuery<EventResult>(query);
+    if (resourceVersionParam) {
+      setResourceVersionQuery(
+        `SELECT * FROM $events WHERE metadata.resourceVersion = '${resourceVersionParam}' LIMIT 1`,
+      );
+    } else {
+      setResourceVersionQuery(null);
+    }
+  }, [search]);
+
+  // Auto-open drawer when resourceVersion data is loaded
+  useEffect(() => {
+    if (resourceVersionData && resourceVersionData.length > 0) {
+      setSelectedEvent(resourceVersionData[0]);
+      setDrawerOpen(true);
+    }
+  }, [resourceVersionData]);
 
   const handleExecuteQuery = () => {
     const trimmedWhereClause = whereClause.trim() || "1=1";
@@ -48,11 +78,15 @@ const Discover: React.FC = () => {
   const handleEventClick = (event: EventResult) => {
     setSelectedEvent(event);
     setDrawerOpen(true);
+    // Update URL with resourceVersion parameter
+    updateParams({ resourceVersion: event.metadata.resourceVersion });
   };
 
   const handleDrawerClose = () => {
     setDrawerOpen(false);
     setSelectedEvent(null);
+    // Remove resourceVersion from URL
+    updateParams({ resourceVersion: undefined });
   };
 
   return (

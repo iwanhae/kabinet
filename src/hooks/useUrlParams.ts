@@ -8,6 +8,7 @@ export interface UrlParams {
   to?: string;
   where?: string;
   query?: string;
+  resourceVersion?: string;
 }
 
 /**
@@ -24,6 +25,7 @@ export const useUrlParams = () => {
       to: searchParams.get("to") || undefined,
       where: searchParams.get("where") || undefined,
       query: searchParams.get("query") || undefined,
+      resourceVersion: searchParams.get("resourceVersion") || undefined,
     };
   };
 
