@@ -6,11 +6,78 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/RoaringBitmap/roaring"
 	corev1 "k8s.io/api/core/v1"
 )
+
+// populateResourceVersionBitset queries all existing resourceVersion values
+func (s *Storage) populateResourceVersionBitset(ctx context.Context) error {
+	query := `SELECT DISTINCT (metadata).resourceVersion FROM kube_events`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to query resourceVersions: %w", err)
+	}
+	defer rows.Close()
+
+	bitset := roaring.NewBitmap()
+	var parseFailures int
+
+	for rows.Next() {
+		var rv string
+		if err := rows.Scan(&rv); err != nil {
+			return fmt.Errorf("failed to scan resourceVersion: %w", err)
+		}
+
+		rvInt, err := strconv.ParseInt(rv, 10, 64)
+		if err != nil {
+			parseFailures++
+			log.Printf("storage: warning - failed to parse resourceVersion '%s': %v", rv, err)
+			continue
+		}
+
+		bitset.AddInt(int(rvInt))
+	}
+
+	s.resourceVersionMu.Lock()
+	s.resourceVersionSet = bitset
+	s.resourceVersionMu.Unlock()
+
+	log.Printf("storage: populated resourceVersion bitset with %d values (%d parse failures)",
+		bitset.GetCardinality(), parseFailures)
+
+	return nil
+}
+
+// isDuplicate checks if a resourceVersion already exists in the bitset
+func (s *Storage) isDuplicate(resourceVersion string) bool {
+	rvInt, err := strconv.ParseInt(resourceVersion, 10, 64)
+	if err != nil {
+		// If we can't parse it, don't treat as duplicate
+		return false
+	}
+
+	s.resourceVersionMu.RLock()
+	exists := s.resourceVersionSet.ContainsInt(int(rvInt))
+	s.resourceVersionMu.RUnlock()
+
+	return exists
+}
+
+// markAsProcessed adds a resourceVersion to the bitset
+func (s *Storage) markAsProcessed(resourceVersion string) {
+	rvInt, err := strconv.ParseInt(resourceVersion, 10, 64)
+	if err != nil {
+		return
+	}
+
+	s.resourceVersionMu.Lock()
+	s.resourceVersionSet.AddInt(int(rvInt))
+	s.resourceVersionMu.Unlock()
+}
 
 // AppendEvent adds a single event to the storage channel
 func (s *Storage) AppendEvent(ctx context.Context, k8sEvent *corev1.Event) error {
@@ -73,7 +140,18 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 	}
 	defer tx.Rollback()
 
+	insertedCount := 0
+	skippedCount := 0
+
 	for _, k8sEvent := range k8sEvents {
+		resourceVersion := k8sEvent.ObjectMeta.ResourceVersion
+
+		// Check bitset BEFORE expensive args building
+		if s.isDuplicate(resourceVersion) {
+			skippedCount++
+			continue
+		}
+
 		var series any
 		if k8sEvent.Series != nil {
 			series = map[string]any{
@@ -135,19 +213,24 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 			k8sEvent.ReportingController,
 			k8sEvent.ReportingInstance,
 		}
+		// Changed from INSERT OR IGNORE to plain INSERT
 		placeholder := "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-		query := fmt.Sprintf("INSERT OR IGNORE INTO kube_events VALUES %s", placeholder)
+		query := fmt.Sprintf("INSERT INTO kube_events VALUES %s", placeholder)
 		_, err := tx.Exec(query, args...)
 		if err != nil {
 			return fmt.Errorf("failed to batch insert events: %w", err)
 		}
+
+		// Mark as processed in bitset
+		s.markAsProcessed(resourceVersion)
+		insertedCount++
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Printf("storage: inserted %d events into kube_events", len(k8sEvents))
+	log.Printf("storage: inserted %d events, skipped %d duplicates", insertedCount, skippedCount)
 
 	return nil
 }

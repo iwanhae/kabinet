@@ -102,10 +102,6 @@ func (s *Storage) archive(ctx context.Context) error {
 		}
 		defer tx.Rollback() // Rollback on error
 
-		if _, err := tx.ExecContext(ctx, "DROP INDEX IF EXISTS kube_events_resourceVersion_idx"); err != nil {
-			return fmt.Errorf("failed to drop index before archival: %w", err)
-		}
-
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE kube_events RENAME TO %s", archiveTableName)); err != nil {
 			return fmt.Errorf("failed to rename table: %w", err)
 		}
@@ -125,6 +121,9 @@ func (s *Storage) archive(ctx context.Context) error {
 	}
 
 	log.Printf("storage: successfully swapped kube_events table with %s.", archiveTableName)
+
+	// Clean up bitset (non-blocking)
+	go s.removeArchivedResourceVersions(ctx, archiveTableName)
 
 	var minTime, maxTime time.Time
 	query := fmt.Sprintf("SELECT MIN(lastTimestamp), MAX(lastTimestamp) FROM %s", archiveTableName)
@@ -170,6 +169,40 @@ func (s *Storage) processArchivedTable(ctx context.Context, tableName string, mi
 	}
 
 	log.Printf("storage: archiving: successfully dropped archived table %s", tableName)
+}
+
+// removeArchivedResourceVersions removes archived resourceVersions from the bitset
+func (s *Storage) removeArchivedResourceVersions(ctx context.Context, tableName string) {
+	query := fmt.Sprintf(`SELECT DISTINCT (metadata).resourceVersion FROM %s`, tableName)
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		log.Printf("storage: error querying archived resourceVersions: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	s.resourceVersionMu.Lock()
+	defer s.resourceVersionMu.Unlock()
+
+	var removedCount int
+	for rows.Next() {
+		var rv string
+		if err := rows.Scan(&rv); err != nil {
+			log.Printf("storage: warning - failed to scan archived resourceVersion: %v", err)
+			continue
+		}
+
+		rvInt, err := strconv.ParseInt(rv, 10, 64)
+		if err != nil {
+			log.Printf("storage: warning - failed to parse archived resourceVersion '%s': %v", rv, err)
+			continue
+		}
+
+		s.resourceVersionSet.Remove(uint32(rvInt))
+		removedCount++
+	}
+
+	log.Printf("storage: removed %d resourceVersions from bitset after archival", removedCount)
 }
 
 func (s *Storage) CompactParquetFiles(ctx context.Context, compactThresholdBytes int64) error {
