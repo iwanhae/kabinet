@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RoaringBitmap/roaring"
+	"github.com/RoaringBitmap/roaring/roaring64"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -23,7 +23,7 @@ func (s *Storage) populateResourceVersionBitset(ctx context.Context) error {
 	}
 	defer rows.Close()
 
-	bitset := roaring.NewBitmap()
+	bitset := roaring64.New()
 	var parseFailures int
 
 	for rows.Next() {
@@ -33,13 +33,13 @@ func (s *Storage) populateResourceVersionBitset(ctx context.Context) error {
 		}
 
 		rvInt, err := strconv.ParseInt(rv, 10, 64)
-		if err != nil {
+		if err != nil || rvInt < 0 {
 			parseFailures++
 			log.Printf("storage: warning - failed to parse resourceVersion '%s': %v", rv, err)
 			continue
 		}
 
-		bitset.AddInt(int(rvInt))
+		bitset.Add(uint64(rvInt))
 	}
 
 	s.resourceVersionMu.Lock()
@@ -55,13 +55,13 @@ func (s *Storage) populateResourceVersionBitset(ctx context.Context) error {
 // isDuplicate checks if a resourceVersion already exists in the bitset
 func (s *Storage) isDuplicate(resourceVersion string) bool {
 	rvInt, err := strconv.ParseInt(resourceVersion, 10, 64)
-	if err != nil {
+	if err != nil || rvInt < 0 {
 		// If we can't parse it, don't treat as duplicate
 		return false
 	}
 
 	s.resourceVersionMu.RLock()
-	exists := s.resourceVersionSet.ContainsInt(int(rvInt))
+	exists := s.resourceVersionSet.Contains(uint64(rvInt))
 	s.resourceVersionMu.RUnlock()
 
 	return exists
@@ -70,12 +70,12 @@ func (s *Storage) isDuplicate(resourceVersion string) bool {
 // markAsProcessed adds a resourceVersion to the bitset
 func (s *Storage) markAsProcessed(resourceVersion string) {
 	rvInt, err := strconv.ParseInt(resourceVersion, 10, 64)
-	if err != nil {
+	if err != nil || rvInt < 0 {
 		return
 	}
 
 	s.resourceVersionMu.Lock()
-	s.resourceVersionSet.AddInt(int(rvInt))
+	s.resourceVersionSet.Add(uint64(rvInt))
 	s.resourceVersionMu.Unlock()
 }
 
@@ -142,6 +142,7 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 
 	insertedCount := 0
 	skippedCount := 0
+	var insertedRVs []string
 
 	for _, k8sEvent := range k8sEvents {
 		resourceVersion := k8sEvent.ObjectMeta.ResourceVersion
@@ -221,13 +222,17 @@ func (s *Storage) AppendEvents(k8sEvents []*corev1.Event) error {
 			return fmt.Errorf("failed to batch insert events: %w", err)
 		}
 
-		// Mark as processed in bitset
-		s.markAsProcessed(resourceVersion)
+		insertedRVs = append(insertedRVs, resourceVersion)
 		insertedCount++
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	// Mark as processed in bitset only AFTER successful commit
+	for _, rv := range insertedRVs {
+		s.markAsProcessed(rv)
 	}
 
 	log.Printf("storage: inserted %d events, skipped %d duplicates", insertedCount, skippedCount)

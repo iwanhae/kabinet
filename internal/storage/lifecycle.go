@@ -122,8 +122,8 @@ func (s *Storage) archive(ctx context.Context) error {
 
 	log.Printf("storage: successfully swapped kube_events table with %s.", archiveTableName)
 
-	// Clean up bitset (non-blocking)
-	go s.removeArchivedResourceVersions(ctx, archiveTableName)
+	// Clean up bitset before processing (must complete before table is dropped)
+	s.removeArchivedResourceVersions(ctx, archiveTableName)
 
 	var minTime, maxTime time.Time
 	query := fmt.Sprintf("SELECT MIN(lastTimestamp), MAX(lastTimestamp) FROM %s", archiveTableName)
@@ -181,10 +181,8 @@ func (s *Storage) removeArchivedResourceVersions(ctx context.Context, tableName 
 	}
 	defer rows.Close()
 
-	s.resourceVersionMu.Lock()
-	defer s.resourceVersionMu.Unlock()
-
-	var removedCount int
+	// Collect all RVs first without holding the lock
+	var toRemove []uint64
 	for rows.Next() {
 		var rv string
 		if err := rows.Scan(&rv); err != nil {
@@ -198,11 +196,17 @@ func (s *Storage) removeArchivedResourceVersions(ctx context.Context, tableName 
 			continue
 		}
 
-		s.resourceVersionSet.Remove(uint32(rvInt))
-		removedCount++
+		toRemove = append(toRemove, uint64(rvInt))
 	}
 
-	log.Printf("storage: removed %d resourceVersions from bitset after archival", removedCount)
+	// Batch remove under lock
+	s.resourceVersionMu.Lock()
+	for _, rv := range toRemove {
+		s.resourceVersionSet.Remove(rv)
+	}
+	s.resourceVersionMu.Unlock()
+
+	log.Printf("storage: removed %d resourceVersions from bitset after archival", len(toRemove))
 }
 
 func (s *Storage) CompactParquetFiles(ctx context.Context, compactThresholdBytes int64) error {

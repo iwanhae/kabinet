@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/RoaringBitmap/roaring"
+	"github.com/RoaringBitmap/roaring/roaring64"
 	"github.com/iwanhae/kabinet/internal/utils"
 	_ "github.com/marcboeker/go-duckdb/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -28,7 +28,7 @@ type Storage struct {
 	wg *sync.WaitGroup
 
 	// RoaringBitSet for deduplication
-	resourceVersionSet *roaring.Bitmap
+	resourceVersionSet *roaring64.Bitmap
 	resourceVersionMu   sync.RWMutex
 }
 
@@ -57,19 +57,20 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 		dataDir:            dataDir,
 		eventCh:            make(chan *corev1.Event, 2000),
 		wg:                 &sync.WaitGroup{},
-		resourceVersionSet: roaring.NewBitmap(),
+		resourceVersionSet: roaring64.New(),
 	}
+
+	// Populate bitset BEFORE starting the batch inserter to avoid
+	// processing events against an empty bitset
+	if err := s.populateResourceVersionBitset(ctx); err != nil {
+		log.Printf("storage: warning - failed to populate resourceVersion bitset: %v", err)
+	}
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		s.runBatchInserter(ctx)
 	}()
-
-	// Populate bitset with existing resourceVersion values
-	if err := s.populateResourceVersionBitset(ctx); err != nil {
-		log.Printf("storage: warning - failed to populate resourceVersion bitset: %v", err)
-		// Continue with empty bitset - will rebuild from inserts
-	}
 
 	return s, nil
 }
