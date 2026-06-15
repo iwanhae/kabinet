@@ -37,15 +37,23 @@ func (s *Storage) RangeQuery(ctx context.Context, query string, start, end time.
 	}, nil
 }
 
-func buildFromClause(relevantFiles []string, includeKubeEvents bool, from, to time.Time) (string, error) {
+func buildFromClause(jsonlFiles []string, parquetFiles []string, from, to time.Time) (string, error) {
 	var fromSources []string
-	if includeKubeEvents {
-		fromSources = append(fromSources, fmt.Sprintf("SELECT * FROM kube_events WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s'", from.Format(time.RFC3339), to.Format(time.RFC3339)))
+
+	// JSONL source (recent events)
+	if len(jsonlFiles) > 0 {
+		quotedFiles := make([]string, len(jsonlFiles))
+		for i, p := range jsonlFiles {
+			quotedFiles[i] = fmt.Sprintf("'%s'", p)
+		}
+		jsonlSource := fmt.Sprintf("SELECT * FROM read_json_auto([%s]) WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s'", strings.Join(quotedFiles, ", "), from.Format(time.RFC3339), to.Format(time.RFC3339))
+		fromSources = append(fromSources, jsonlSource)
 	}
 
-	if len(relevantFiles) > 0 {
-		quotedFiles := make([]string, len(relevantFiles))
-		for i, p := range relevantFiles {
+	// Parquet source (archived events)
+	if len(parquetFiles) > 0 {
+		quotedFiles := make([]string, len(parquetFiles))
+		for i, p := range parquetFiles {
 			quotedFiles[i] = fmt.Sprintf("'%s'", p)
 		}
 		parquetSource := fmt.Sprintf("SELECT * FROM read_parquet([%s]) WHERE lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s'", strings.Join(quotedFiles, ", "), from.Format(time.RFC3339), to.Format(time.RFC3339))

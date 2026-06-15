@@ -14,13 +14,15 @@ import (
 	"time"
 )
 
+const (
+	// Max age of JSONL file before archival (10 minutes)
+	maxJSONLFileAgeForArchive = 10 * time.Minute
+)
+
 // LifecycleManager manages data lifecycle with periodic archiving and retention enforcement
 func (s *Storage) LifecycleManager(ctx context.Context, storageLimitBytes int64) {
-	log.Printf("storage: starting data lifecycle manager. check_interval=1m, archive_row_count_threshold=%d, storage_limit_bytes=%d",
-		122880, storageLimitBytes)
-
-	// Fixed row count threshold: 122,880 rows
-	archiveRowCountThreshold := int64(122880)
+	log.Printf("storage: starting data lifecycle manager. check_interval=1m, archive_max_file_age=%s, storage_limit_bytes=%d",
+		maxJSONLFileAgeForArchive, storageLimitBytes)
 
 	// Ticker for periodic maintenance (compaction and retention)
 	ticker := time.NewTicker(1 * time.Minute)
@@ -29,10 +31,13 @@ func (s *Storage) LifecycleManager(ctx context.Context, storageLimitBytes int64)
 	for {
 		select {
 		case <-ticker.C:
-			// Check row count and archive if it exceeds the threshold
-			_, err := s.archiveByRowCount(ctx, archiveRowCountThreshold)
+			// Check for old JSONL files and archive them
+			archived, err := s.archiveByFileAge(ctx, maxJSONLFileAgeForArchive)
 			if err != nil {
-				log.Printf("storage: error during row-count-based archival: %v", err)
+				log.Printf("storage: error during file-age-based archival: %v", err)
+			}
+			if archived {
+				log.Println("storage: archival completed, running maintenance...")
 			}
 
 			// Run maintenance tasks (compaction and retention)
@@ -49,25 +54,125 @@ func (s *Storage) LifecycleManager(ctx context.Context, storageLimitBytes int64)
 	}
 }
 
-func (s *Storage) archiveByRowCount(ctx context.Context, archiveRowCountThreshold int64) (bool, error) {
-	// Get actual row count
-	var rowCount int64
-	countQuery := `SELECT COUNT(*) FROM kube_events`
-	err := s.db.QueryRowContext(ctx, countQuery).Scan(&rowCount)
+func (s *Storage) archiveByFileAge(ctx context.Context, maxAge time.Duration) (bool, error) {
+	jsonlFiles, err := s.findJSONLFilesOlderThan(maxAge)
 	if err != nil {
-		return false, fmt.Errorf("failed to count rows in kube_events: %w", err)
+		return false, fmt.Errorf("failed to find old JSONL files: %w", err)
 	}
 
-	if rowCount > archiveRowCountThreshold {
-		log.Printf("storage: kube_events table row count (%d) exceeds threshold (%d). starting archival.", rowCount, archiveRowCountThreshold)
-		if err := s.archive(ctx); err != nil {
-			return false, fmt.Errorf("failed to archive table: %w", err)
-		}
-		return true, nil
-	} else {
-		log.Printf("storage: kube_events table row count (%d) is below threshold (%d). skipping archival.", rowCount, archiveRowCountThreshold)
+	if len(jsonlFiles) == 0 {
+		return false, nil
 	}
-	return false, nil
+
+	for _, jsonlFile := range jsonlFiles {
+		go s.processJSONLToParquet(ctx, jsonlFile)
+	}
+	return true, nil
+}
+
+// findJSONLFilesOlderThan finds JSONL files older than the specified age
+func (s *Storage) findJSONLFilesOlderThan(maxAge time.Duration) ([]string, error) {
+	files, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read data directory: %w", err)
+	}
+
+	var oldFiles []string
+
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".jsonl") || !strings.HasPrefix(file.Name(), "events_") {
+			continue
+		}
+
+		// Skip the current active JSONL file
+		if s.jsonlWriter.GetCurrentPath() == filepath.Join(s.dataDir, file.Name()) {
+			continue
+		}
+
+		info, err := file.Info()
+		if err != nil {
+			log.Printf("storage: could not get file info for %s: %v", file.Name(), err)
+			continue
+		}
+
+		// Check file age based on modification time
+		if time.Since(info.ModTime()) >= maxAge {
+			oldFiles = append(oldFiles, filepath.Join(s.dataDir, file.Name()))
+		}
+	}
+
+	return oldFiles, nil
+}
+
+// processJSONLToParquet converts a JSONL file to Parquet and deletes the original
+func (s *Storage) processJSONLToParquet(ctx context.Context, jsonlPath string) {
+	log.Printf("storage: starting archival for %s", jsonlPath)
+
+	// Get time range from JSONL for filename
+	minTime, maxTime, err := s.getJSONLTimeRange(ctx, jsonlPath)
+	if err != nil {
+		log.Printf("storage: error getting time range for %s: %v", jsonlPath, err)
+		// Fallback to file modification time
+		info, err := os.Stat(jsonlPath)
+		if err != nil {
+			log.Printf("storage: error getting file info for %s: %v", jsonlPath, err)
+			return
+		}
+		minTime = info.ModTime()
+		maxTime = info.ModTime()
+	}
+
+	// Parquet filename: events_<min_ts>_<max_ts>.parquet
+	parquetPath := filepath.Join(s.dataDir, fmt.Sprintf("events_%d_%d.parquet", minTime.Unix(), maxTime.Unix()))
+
+	// Use DuckDB to convert JSONL to Parquet
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		log.Printf("storage: error starting transaction for archival: %v", err)
+		return
+	}
+	defer tx.Rollback()
+
+	copySQL := fmt.Sprintf(`
+		COPY (SELECT * FROM read_json_auto('%s'))
+		TO '%s' (FORMAT 'parquet', COMPRESSION 'zstd');
+	`, jsonlPath, parquetPath)
+
+	if _, err := tx.ExecContext(ctx, copySQL); err != nil {
+		log.Printf("storage: error converting JSONL to Parquet: %v", err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("storage: error committing archival transaction: %v", err)
+		return
+	}
+
+	log.Printf("storage: successfully created %s from %s", parquetPath, jsonlPath)
+
+	// Delete the original JSONL file
+	if err := os.Remove(jsonlPath); err != nil {
+		log.Printf("storage: error deleting JSONL file %s: %v", jsonlPath, err)
+		return
+	}
+
+	log.Printf("storage: successfully archived and deleted %s", jsonlPath)
+}
+
+// getJSONLTimeRange gets the min and max lastTimestamp from a JSONL file
+func (s *Storage) getJSONLTimeRange(ctx context.Context, jsonlPath string) (time.Time, time.Time, error) {
+	query := fmt.Sprintf(`
+		SELECT MIN(lastTimestamp) as min_ts, MAX(lastTimestamp) as max_ts
+		FROM read_json_auto('%s')
+	`, jsonlPath)
+
+	var minTime, maxTime time.Time
+	err := s.db.QueryRowContext(ctx, query).Scan(&minTime, &maxTime)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("failed to get time range: %w", err)
+	}
+
+	return minTime, maxTime, nil
 }
 
 func (s *Storage) runMaintenance(ctx context.Context, storageLimitBytes int64) error {
@@ -78,98 +183,6 @@ func (s *Storage) runMaintenance(ctx context.Context, storageLimitBytes int64) e
 		return fmt.Errorf("parquet compaction failed: %w", err)
 	}
 	return nil
-}
-
-// archive archives the current kube_events table to parquet files
-func (s *Storage) archive(ctx context.Context) error {
-	var count int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM kube_events").Scan(&count); err != nil {
-		return fmt.Errorf("failed to count rows in kube_events: %w", err)
-	}
-
-	if count == 0 {
-		log.Println("storage: no new events to archive.")
-		return nil
-	}
-
-	archiveTableName := fmt.Sprintf("kube_events_archive_%d", time.Now().UnixNano())
-	log.Printf("storage: archiving %d events to table %s", count, archiveTableName)
-
-	err := func() error {
-		tx, err := s.db.Begin()
-		if err != nil {
-			return fmt.Errorf("failed to begin transaction: %w", err)
-		}
-		defer tx.Rollback() // Rollback on error
-
-		if _, err := tx.ExecContext(ctx, "DROP INDEX IF EXISTS kube_events_resourceVersion_idx"); err != nil {
-			return fmt.Errorf("failed to drop index before archival: %w", err)
-		}
-
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE kube_events RENAME TO %s", archiveTableName)); err != nil {
-			return fmt.Errorf("failed to rename table: %w", err)
-		}
-
-		if _, err := tx.ExecContext(ctx, createTableSQL); err != nil {
-			return fmt.Errorf("failed to create new kube_events table: %w", err)
-		}
-
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("failed to commit transaction: %w", err)
-		}
-
-		return nil
-	}()
-	if err != nil {
-		return fmt.Errorf("failed to swap tables: %w", err)
-	}
-
-	log.Printf("storage: successfully swapped kube_events table with %s.", archiveTableName)
-
-	var minTime, maxTime time.Time
-	query := fmt.Sprintf("SELECT MIN(lastTimestamp), MAX(lastTimestamp) FROM %s", archiveTableName)
-	if err := s.db.QueryRowContext(ctx, query).Scan(&minTime, &maxTime); err != nil {
-		log.Printf("storage: failed to get min/max timestamps for table %s: %v. proceeding with fallback naming", archiveTableName, err)
-	}
-
-	go s.processArchivedTable(ctx, archiveTableName, minTime, maxTime)
-
-	return nil
-}
-
-// processArchivedTable processes an archived table by exporting it to parquet and then dropping it
-func (s *Storage) processArchivedTable(ctx context.Context, tableName string, minTime, maxTime time.Time) {
-	log.Printf("storage: archiving: starting background processing for table: %s", tableName)
-
-	parquetFileName := filepath.Join(s.dataDir, fmt.Sprintf("events_%d_%d.parquet", minTime.Unix(), maxTime.Unix()))
-
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		log.Printf("storage: archiving: error getting connection for background processing: %v", err)
-		return
-	}
-	defer tx.Rollback()
-
-	copySQL := fmt.Sprintf("COPY %s TO '%s' (FORMAT 'parquet', COMPRESSION 'zstd');", tableName, parquetFileName)
-	if _, err := tx.ExecContext(ctx, copySQL); err != nil {
-		log.Printf("storage: archiving: error exporting table %s to parquet: %v", tableName, err)
-		// Don't drop the table if copy fails, to allow for manual recovery
-		return
-	}
-	log.Printf("storage: archiving: successfully exported table %s to %s", tableName, parquetFileName)
-
-	dropSQL := fmt.Sprintf("DROP TABLE %s", tableName)
-	if _, err := tx.ExecContext(ctx, dropSQL); err != nil {
-		log.Printf("storage: archiving: error dropping archived table %s: %v", tableName, err)
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		log.Printf("storage: archiving: error committing transaction: %v", err)
-		return
-	}
-
-	log.Printf("storage: archiving: successfully dropped archived table %s", tableName)
 }
 
 func (s *Storage) CompactParquetFiles(ctx context.Context, compactThresholdBytes int64) error {
@@ -300,7 +313,7 @@ func (s *Storage) mergeFileBatch(ctx context.Context, batch []os.DirEntry) error
 	return nil
 }
 
-// EnforceRetention enforces data retention by deleting oldest parquet files when size limit is exceeded
+// EnforceRetention enforces data retention by deleting oldest files (JSONL or Parquet) when size limit is exceeded
 func (s *Storage) EnforceRetention(limitBytes int64) error {
 	log.Println("storage: enforcing retention policy...")
 	defer log.Println("storage: finished enforcing retention policy.")
@@ -310,20 +323,55 @@ func (s *Storage) EnforceRetention(limitBytes int64) error {
 		return fmt.Errorf("failed to read data directory: %w", err)
 	}
 
-	var parquetFiles []os.DirEntry
+	// Collect both JSONL and Parquet files
+	type dataFile struct {
+		entry os.DirEntry
+		ts    int64
+	}
+	var dataFiles []dataFile
+
 	for _, file := range files {
-		if !file.IsDir() && strings.HasSuffix(file.Name(), ".parquet") && strings.HasPrefix(file.Name(), "events_") {
-			parquetFiles = append(parquetFiles, file)
+		if file.IsDir() {
+			continue
+		}
+
+		// Handle JSONL files
+		if strings.HasSuffix(file.Name(), ".jsonl") && strings.HasPrefix(file.Name(), "events_") {
+			// Skip the current active JSONL file
+			if s.jsonlWriter.GetCurrentPath() == filepath.Join(s.dataDir, file.Name()) {
+				continue
+			}
+
+			// Extract timestamp from filename: events_<timestamp>.jsonl
+			base := strings.TrimSuffix(file.Name(), ".jsonl")
+			parts := strings.Split(base, "_")
+			if len(parts) == 2 {
+				if ts, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+					dataFiles = append(dataFiles, dataFile{entry: file, ts: ts})
+					continue
+				}
+			}
+
+			// Fallback: use modification time
+			if info, err := file.Info(); err == nil {
+				dataFiles = append(dataFiles, dataFile{entry: file, ts: info.ModTime().Unix()})
+			}
+			continue
+		}
+
+		// Handle Parquet files
+		if strings.HasSuffix(file.Name(), ".parquet") && strings.HasPrefix(file.Name(), "events_") {
+			ts := extractTimestampFromName(file.Name())
+			dataFiles = append(dataFiles, dataFile{entry: file, ts: ts})
 		}
 	}
 
-	// Sort by the timestamp in the filename, oldest first.
-	sort.Slice(parquetFiles, func(i, j int) bool {
-		tsI := extractTimestampFromName(parquetFiles[i].Name())
-		tsJ := extractTimestampFromName(parquetFiles[j].Name())
-		// If timestamps are equal or couldn't be parsed, fallback to name comparison
+	// Sort by timestamp, oldest first
+	sort.Slice(dataFiles, func(i, j int) bool {
+		tsI := dataFiles[i].ts
+		tsJ := dataFiles[j].ts
 		if tsI == tsJ {
-			return parquetFiles[i].Name() < parquetFiles[j].Name()
+			return dataFiles[i].entry.Name() < dataFiles[j].entry.Name()
 		}
 		return tsI < tsJ
 	})
@@ -333,30 +381,30 @@ func (s *Storage) EnforceRetention(limitBytes int64) error {
 		return fmt.Errorf("failed to get data directory size: %w", err)
 	}
 
-	log.Printf("storage: current parquet files size: %d bytes. Limit: %d bytes.", totalSize, limitBytes)
+	log.Printf("storage: current data directory size: %d bytes. Limit: %d bytes.", totalSize, limitBytes)
 
 	for totalSize > limitBytes {
-		if len(parquetFiles) == 0 {
+		if len(dataFiles) == 0 {
 			break
 		}
-		oldestFile := parquetFiles[0]
-		parquetFiles = parquetFiles[1:]
+		oldest := dataFiles[0]
+		dataFiles = dataFiles[1:]
 
-		info, err := oldestFile.Info()
+		info, err := oldest.entry.Info()
 		if err != nil {
-			log.Printf("storage: could not get file info for deletion candidate %s: %v", oldestFile.Name(), err)
+			log.Printf("storage: could not get file info for deletion candidate %s: %v", oldest.entry.Name(), err)
 			continue
 		}
 
-		filePath := filepath.Join(s.dataDir, oldestFile.Name())
+		filePath := filepath.Join(s.dataDir, oldest.entry.Name())
 		if err := os.Remove(filePath); err != nil {
-			log.Printf("storage: failed to delete oldest parquet file %s: %v", filePath, err)
+			log.Printf("storage: failed to delete oldest file %s: %v", filePath, err)
 			// Stop trying to delete if one fails
 			break
 		}
 
 		totalSize -= info.Size()
-		log.Printf("storage: deleted oldest parquet file: %s. New total size: %d bytes", oldestFile.Name(), totalSize)
+		log.Printf("storage: deleted oldest file: %s. New total size: %d bytes", oldest.entry.Name(), totalSize)
 	}
 
 	return nil
