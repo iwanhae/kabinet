@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/RoaringBitmap/roaring/roaring64"
 	"github.com/iwanhae/kabinet/internal/utils"
 	_ "github.com/marcboeker/go-duckdb/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +26,10 @@ type Storage struct {
 	eventCh chan *corev1.Event
 
 	wg *sync.WaitGroup
+
+	// RoaringBitSet for deduplication
+	resourceVersionSet *roaring64.Bitmap
+	resourceVersionMu   sync.RWMutex
 }
 
 // New creates a new Storage instance
@@ -47,12 +52,20 @@ func New(ctx context.Context, dbPath string) (*Storage, error) {
 	}
 
 	s := &Storage{
-		db:      db,
-		dbPath:  dbPath,
-		dataDir: dataDir,
-		eventCh: make(chan *corev1.Event, 2000),
-		wg:      &sync.WaitGroup{},
+		db:                 db,
+		dbPath:             dbPath,
+		dataDir:            dataDir,
+		eventCh:            make(chan *corev1.Event, 2000),
+		wg:                 &sync.WaitGroup{},
+		resourceVersionSet: roaring64.New(),
 	}
+
+	// Populate bitset BEFORE starting the batch inserter to avoid
+	// processing events against an empty bitset
+	if err := s.populateResourceVersionBitset(ctx); err != nil {
+		log.Printf("storage: warning - failed to populate resourceVersion bitset: %v", err)
+	}
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -104,6 +117,17 @@ func (s *Storage) Stats(ctx context.Context) map[string]any {
 		"duckdb_temp_files": statsTempFiles,
 		"duckdb_memory":     statsMemory,
 		"errors":            errs,
+		// Deduplication stats
+		"dedup_bitset_cardinality": func() uint64 {
+			s.resourceVersionMu.RLock()
+			defer s.resourceVersionMu.RUnlock()
+			return s.resourceVersionSet.GetCardinality()
+		}(),
+		"dedup_bitset_size_bytes": func() uint64 {
+			s.resourceVersionMu.RLock()
+			defer s.resourceVersionMu.RUnlock()
+			return s.resourceVersionSet.GetSizeInBytes()
+		}(),
 	}
 }
 
