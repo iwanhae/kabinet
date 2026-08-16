@@ -4,6 +4,8 @@ import { SWRConfig } from "swr";
 import Layout from "./components/Layout";
 import Overview from "./pages/Overview";
 import Namespaces from "./pages/Namespaces";
+import Nodes from "./pages/Nodes";
+import Components from "./pages/Components";
 import Explore from "./pages/Explore";
 import { RefreshProvider } from "./contexts/RefreshContext";
 import { Spinner } from "./ui";
@@ -23,6 +25,8 @@ const AppContent = () => {
     <Switch>
       <Route path="/" component={Overview} />
       <Route path="/p/namespaces" component={Namespaces} />
+      <Route path="/p/nodes" component={Nodes} />
+      <Route path="/p/components" component={Components} />
       <Route path="/p/discover" component={Explore} />
       <Route path="/agent" component={AgentPage} />
     </Switch>

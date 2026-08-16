@@ -27,8 +27,8 @@ export const STORAGE_REASONS = [
 const inList = (values: string[]) =>
   values.map((v) => `'${escapeSqlString(v)}'`).join(", ");
 
-/** All KPI-strip numbers in a single scan. */
-export const buildKpiQuery = (): string => `
+/** All KPI-strip numbers in a single scan, within the global filters. */
+export const buildKpiQuery = (whereSql: string): string => `
   SELECT
     COUNT(*) AS total_events,
     COUNT(*) FILTER (WHERE type = 'Warning') AS warning_events,
@@ -39,6 +39,7 @@ export const buildKpiQuery = (): string => `
     COUNT(*) FILTER (WHERE type = 'Warning' AND reason IN (${inList(NODE_ISSUE_REASONS)})) AS node_issues,
     COUNT(*) FILTER (WHERE reason IN (${inList(STORAGE_REASONS)})) AS storage_events
   FROM $events
+  WHERE (${whereSql})
 `;
 
 export interface KpiRow {
@@ -53,24 +54,30 @@ export interface KpiRow {
 }
 
 /**
- * Per-namespace, per-bucket counts in a single scan. Top-N capping and the
- * "(other)" fold happen client-side (see useNamespaceBuckets) so the heatmap,
- * the namespaces table, and the overview summary share one query.
+ * Per-dimension (namespace/node/component), per-bucket counts in a single
+ * scan. `dimExpr` must come from the FIELD_DEFS whitelist — never user input.
+ * Top-N capping and the "(other)" fold happen client-side (see
+ * useDimensionBuckets) so heatmap, tables, and overview summaries share one
+ * query per dimension.
  */
-export const buildNamespaceBucketsQuery = (intervalSql: string): string => `
+export const buildDimensionBucketsQuery = (
+  dimExpr: string,
+  intervalSql: string,
+  whereSql: string,
+): string => `
   SELECT
-    metadata.namespace AS ns,
+    ${dimExpr} AS dim,
     time_bucket(INTERVAL '${intervalSql}', ${TS_EXPR}) AS bucket,
     COUNT(*) AS total,
     COUNT(*) FILTER (WHERE type = 'Warning') AS warnings
   FROM $events
-  WHERE metadata.namespace IS NOT NULL
+  WHERE ${dimExpr} IS NOT NULL AND (${whereSql})
   GROUP BY 1, 2
   ORDER BY 1, 2
 `;
 
-export interface NamespaceBucketRow {
-  ns: string;
+export interface DimensionBucketRow {
+  dim: string;
   bucket: string;
   total: number;
   warnings: number;
@@ -80,12 +87,17 @@ export interface NamespaceBucketRow {
  * Reason deltas vs the previous period. The request window must be doubled
  * (start = from - (to - from)) so the previous period is in scan range.
  */
-export const buildTopMoversQuery = (fromIso: string, limit = 15): string => `
+export const buildTopMoversQuery = (
+  fromIso: string,
+  limit: number,
+  whereSql: string,
+): string => `
   SELECT
     reason,
     COUNT(*) FILTER (WHERE ${TS_EXPR} >= TIMESTAMPTZ '${escapeSqlString(fromIso)}') AS current_count,
     COUNT(*) FILTER (WHERE ${TS_EXPR} <  TIMESTAMPTZ '${escapeSqlString(fromIso)}') AS previous_count
   FROM $events
+  WHERE (${whereSql})
   GROUP BY reason
   ORDER BY abs(current_count - previous_count) DESC
   LIMIT ${limit}

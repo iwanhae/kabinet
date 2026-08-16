@@ -1,26 +1,13 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Code2, Download, ListFilter, Plus, X } from "lucide-react";
 import { Button, Chip, TextArea } from "../../ui";
+import { useFilters } from "../../hooks/useFilters";
+import { useTimeRange } from "../../hooks/useUrlParams";
 import { FIELD_DEFS } from "../../lib/filters/fields";
-import {
-  OPERATOR_LABELS,
-  type FilterChip,
-  type FilterState,
-} from "../../lib/filters/model";
+import { OPERATOR_LABELS, type FilterChip } from "../../lib/filters/model";
 import { compileFilters } from "../../lib/filters/compile";
 import FilterChipEditor from "./FilterChipEditor";
 import styles from "./FilterBar.module.css";
-
-export interface FilterBarProps {
-  state: FilterState;
-  onAddChip: (chip: Omit<FilterChip, "id">) => void;
-  onUpdateChip: (id: string, patch: Partial<Omit<FilterChip, "id">>) => void;
-  onRemoveChip: (id: string) => void;
-  onSetRawMode: (rawWhere: string) => void;
-  onSetChipsMode: (chips: FilterChip[]) => void;
-  onClear: () => void;
-  downloadHref: string;
-}
 
 const chipLabel = (chip: FilterChip): string => {
   const def = FIELD_DEFS[chip.field];
@@ -29,21 +16,40 @@ const chipLabel = (chip: FilterChip): string => {
   return `${def.label} ${OPERATOR_LABELS[chip.op]} ${value}`;
 };
 
-const FilterBar: React.FC<FilterBarProps> = ({
-  state,
-  onAddChip,
-  onUpdateChip,
-  onRemoveChip,
-  onSetRawMode,
-  onSetChipsMode,
-  onClear,
-  downloadHref,
-}) => {
+/**
+ * Global filter bar. Filters live in URL params and apply to every data tab
+ * (Overview, Namespaces, Nodes, Components, Explore) — like the time range.
+ */
+const FilterBar: React.FC = () => {
+  const {
+    state,
+    whereSql,
+    addChip,
+    updateChip,
+    removeChip,
+    setRawMode,
+    setChipsMode,
+    clear,
+  } = useFilters();
+  const { from, to } = useTimeRange();
+
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<FilterChip | null>(null);
   const [editAnchor, setEditAnchor] = useState<HTMLElement | null>(null);
   const [rawDraft, setRawDraft] = useState(state.rawWhere);
+
+  // The bar persists across navigation — keep the draft in sync when the
+  // URL changes underneath it.
+  useEffect(() => {
+    setRawDraft(state.rawWhere);
+  }, [state.rawWhere]);
+
+  const downloadHref = `/download?${new URLSearchParams({
+    where: whereSql,
+    from,
+    to,
+  }).toString()}`;
 
   const openAdd = () => {
     setEditing(null);
@@ -58,7 +64,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
   };
 
   const switchToRaw = () => {
-    onSetRawMode(compileFilters(state));
+    setRawMode(compileFilters(state));
   };
 
   const switchToChips = () => {
@@ -72,7 +78,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
     ) {
       return;
     }
-    onSetChipsMode([]);
+    setChipsMode([]);
   };
 
   if (state.mode === "raw") {
@@ -82,11 +88,11 @@ const FilterBar: React.FC<FilterBarProps> = ({
           className={styles.rawForm}
           onSubmit={(e) => {
             e.preventDefault();
-            onSetRawMode(rawDraft.trim() || "1=1");
+            setRawMode(rawDraft.trim() || "1=1");
           }}
         >
           <span className={styles.rawPrefix}>
-            SELECT * FROM $events WHERE …
+            … FROM $events WHERE (applies to every tab)
           </span>
           <TextArea
             mono
@@ -95,7 +101,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
             onChange={(e) => setRawDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                onSetRawMode(rawDraft.trim() || "1=1");
+                setRawMode(rawDraft.trim() || "1=1");
               }
             }}
             placeholder="type = 'Warning' AND metadata.namespace = 'kube-system'"
@@ -128,7 +134,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
         <Chip
           key={chip.id}
           onClick={(e) => openEdit(chip, e.currentTarget)}
-          onRemove={() => onRemoveChip(chip.id)}
+          onRemove={() => removeChip(chip.id)}
           title={chipLabel(chip)}
         >
           {chipLabel(chip)}
@@ -141,7 +147,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
       </Button>
 
       {state.chips.length > 0 && (
-        <Button variant="ghost" size="sm" onClick={onClear}>
+        <Button variant="ghost" size="sm" onClick={clear}>
           <X size={14} />
           Clear
         </Button>
@@ -168,8 +174,8 @@ const FilterBar: React.FC<FilterBarProps> = ({
         onClose={() => setEditorOpen(false)}
         initial={editing ?? undefined}
         onSubmit={(chip) => {
-          if (editing) onUpdateChip(editing.id, chip);
-          else onAddChip(chip);
+          if (editing) updateChip(editing.id, chip);
+          else addChip(chip);
         }}
       />
     </div>

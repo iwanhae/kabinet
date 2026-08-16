@@ -1,13 +1,13 @@
 import React, { useMemo } from "react";
 import dayjs from "dayjs";
-import { useTimeRange, useUrlParams } from "../../hooks/useUrlParams";
+import { useTimeRange } from "../../hooks/useUrlParams";
+import { useFilters } from "../../hooks/useFilters";
 import {
-  useNamespaceBuckets,
+  useDimensionBuckets,
   foldOther,
-  OTHER_NS,
-} from "../../hooks/useNamespaceBuckets";
+  OTHER_KEY,
+} from "../../hooks/useDimensionBuckets";
 import { bucketEnd } from "../../utils/time";
-import { encodeFilters } from "../../lib/filters/urlCodec";
 import { formatCount } from "../../utils/format";
 import { Alert, Skeleton } from "../../ui";
 import { EChart } from "./EChart";
@@ -42,14 +42,17 @@ const mixRgb = (
  */
 const CabinetHeatmap: React.FC = () => {
   const { from, to } = useTimeRange();
-  const { updateParams } = useUrlParams();
+  const { drill } = useFilters();
   const tokens = useChartTokens();
 
-  const { buckets, rows, interval, isLoading, error } = useNamespaceBuckets(40);
+  const { buckets, rows, interval, isLoading, error } = useDimensionBuckets(
+    "namespace",
+    40,
+  );
 
   const { namespaces, cells, maxTotal } = useMemo(() => {
     const folded = foldOther(rows, buckets.length, TOP_N);
-    const namespaces = folded.map((r) => r.ns);
+    const namespaces = folded.map((r) => r.key);
     const cells: { x: number; y: number; total: number; warnings: number }[] =
       [];
     let maxTotal = 0;
@@ -166,12 +169,12 @@ const CabinetHeatmap: React.FC = () => {
         const bucket = buckets[x];
         if (ns === undefined || bucket === undefined) return;
         const chips =
-          ns === OTHER_NS
+          ns === OTHER_KEY
             ? [
                 {
                   field: "namespace" as const,
                   op: "notIn" as const,
-                  values: namespaces.filter((n) => n !== OTHER_NS),
+                  values: namespaces.filter((n) => n !== OTHER_KEY),
                 },
               ]
             : [
@@ -181,18 +184,13 @@ const CabinetHeatmap: React.FC = () => {
                   values: [ns],
                 },
               ];
-        updateParams(
-          {
-            filters: encodeFilters(chips),
-            where: undefined,
-            from: dayjs(bucket).toISOString(),
-            to: bucketEnd(bucket, interval).toISOString(),
-          },
-          "/p/discover",
-        );
+        drill(chips, {
+          from: dayjs(bucket).toISOString(),
+          to: bucketEnd(bucket, interval).toISOString(),
+        });
       },
     }),
-    [namespaces, buckets, interval, updateParams],
+    [namespaces, buckets, interval, drill],
   );
 
   const height = Math.max(220, namespaces.length * 20 + 60);

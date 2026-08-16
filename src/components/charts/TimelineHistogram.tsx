@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import dayjs from "dayjs";
 import { useEventsQuery } from "../../hooks/useEventsQuery";
+import { useFilters } from "../../hooks/useFilters";
 import { useTimeRange } from "../../hooks/useUrlParams";
 import { getDynamicInterval, intervalToSql, bucketEnd } from "../../utils/time";
 import { TS_EXPR } from "../../lib/sql/expr";
@@ -17,19 +18,16 @@ interface TimelineBucket {
 }
 
 interface Props {
-  where?: string;
   height?: number;
 }
 
 /**
- * Stacked Normal/Warning histogram over the global time range.
+ * Stacked Normal/Warning histogram over the global time range and filters.
  * Drag horizontally (brush) or click a bar to zoom the global range in.
  */
-const TimelineHistogram: React.FC<Props> = ({
-  where = "1=1",
-  height = 260,
-}) => {
+const TimelineHistogram: React.FC<Props> = ({ height = 260 }) => {
   const { from, to, setTimeRange } = useTimeRange();
+  const { whereSql } = useFilters();
   const tokens = useChartTokens();
 
   const interval = useMemo(() => getDynamicInterval(from, to, 60), [from, to]);
@@ -41,11 +39,11 @@ const TimelineHistogram: React.FC<Props> = ({
         type,
         COUNT(*) AS count
       FROM $events
-      WHERE ${where}
+      WHERE ${whereSql}
       GROUP BY time_bucket, type
       ORDER BY time_bucket, type
     `,
-    [interval, where],
+    [interval, whereSql],
   );
 
   const { data, error, isLoading } = useEventsQuery<TimelineBucket>(query);

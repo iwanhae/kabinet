@@ -4,6 +4,7 @@ import { Moon, Sun } from "lucide-react";
 import { useTheme } from "../contexts/ThemeContext";
 import { useNavigation } from "../hooks/useNavigation";
 import { TimeRangePicker } from "./TimeRangePicker";
+import FilterBar from "./filters/FilterBar";
 import ScanCostBar from "./ScanCostBar";
 import { IconButton, cx } from "../ui";
 import styles from "./Layout.module.css";
@@ -23,6 +24,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       text: "Namespaces",
       path: "/p/namespaces",
       href: navigate({ page: "namespaces" }),
+    },
+    {
+      text: "Nodes",
+      path: "/p/nodes",
+      href: navigate({ page: "nodes" }),
+    },
+    {
+      text: "Components",
+      path: "/p/components",
+      href: navigate({ page: "components" }),
     },
     {
       text: "Explore",
@@ -67,7 +78,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       </header>
 
-      <main className={styles.main}>{children}</main>
+      <main className={styles.main}>
+        {location !== "/agent" && (
+          <div className={styles.filterZone}>
+            <FilterBar />
+          </div>
+        )}
+        {children}
+      </main>
       <ScanCostBar />
     </>
   );

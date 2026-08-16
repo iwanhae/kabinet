@@ -64,6 +64,10 @@
   min-height: 100vh;
 }
 
+.filterZone {
+  margin-bottom: var(--sp-4);
+}
+
 @media (max-width: 720px) {
   .topbar {
     gap: var(--sp-3);

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useEventsQuery } from "./useEventsQuery";
+import { useFilters } from "./useFilters";
 import { useTimeRange } from "./useUrlParams";
 import {
   getDynamicInterval,
@@ -7,14 +8,18 @@ import {
   type Interval,
 } from "../utils/time";
 import {
-  buildNamespaceBucketsQuery,
-  type NamespaceBucketRow,
+  buildDimensionBucketsQuery,
+  type DimensionBucketRow,
 } from "../lib/sql/overview";
+import { FIELD_DEFS } from "../lib/filters/fields";
 
-export const OTHER_NS = "(other)";
+export const OTHER_KEY = "(other)";
 
-export interface NamespaceStat {
-  ns: string;
+/** Group-by dimensions backed by the FIELD_DEFS whitelist. */
+export type DimensionField = "namespace" | "host" | "component";
+
+export interface DimensionStat {
+  key: string;
   total: number;
   warnings: number;
   /** Per-bucket totals, aligned with `buckets`. */
@@ -23,25 +28,33 @@ export interface NamespaceStat {
 }
 
 /**
- * Namespace × time-bucket counts over the global range, aggregated
- * client-side. Components sharing the same targetBuckets share one scan
- * (identical SWR key).
+ * Dimension × time-bucket counts over the global time range AND global
+ * filters, aggregated client-side. Components sharing the same dimension +
+ * targetBuckets share one scan (identical SWR key).
  */
-export function useNamespaceBuckets(targetBuckets = 40): {
+export function useDimensionBuckets(
+  field: DimensionField,
+  targetBuckets = 40,
+): {
   buckets: string[];
-  rows: NamespaceStat[]; // sorted by total desc
+  rows: DimensionStat[]; // sorted by total desc
   interval: Interval;
   isLoading: boolean;
   error?: Error;
 } {
   const { from, to } = useTimeRange();
+  const { whereSql } = useFilters();
   const interval = useMemo(
     () => getDynamicInterval(from, to, targetBuckets),
     [from, to, targetBuckets],
   );
 
-  const { data, error, isLoading } = useEventsQuery<NamespaceBucketRow>(
-    buildNamespaceBucketsQuery(intervalToSql(interval)),
+  const { data, error, isLoading } = useEventsQuery<DimensionBucketRow>(
+    buildDimensionBucketsQuery(
+      FIELD_DEFS[field].sqlExpr,
+      intervalToSql(interval),
+      whereSql,
+    ),
     { scope: "overview" },
   );
 
@@ -49,18 +62,18 @@ export function useNamespaceBuckets(targetBuckets = 40): {
     const raw = data ?? [];
     const buckets = [...new Set(raw.map((r) => r.bucket))].sort();
     const bucketIndex = new Map(buckets.map((b, i) => [b, i]));
-    const byNs = new Map<string, NamespaceStat>();
+    const byKey = new Map<string, DimensionStat>();
     raw.forEach((r) => {
-      let stat = byNs.get(r.ns);
+      let stat = byKey.get(r.dim);
       if (!stat) {
         stat = {
-          ns: r.ns,
+          key: r.dim,
           total: 0,
           warnings: 0,
           trend: new Array<number>(buckets.length).fill(0),
           warnTrend: new Array<number>(buckets.length).fill(0),
         };
-        byNs.set(r.ns, stat);
+        byKey.set(r.dim, stat);
       }
       const i = bucketIndex.get(r.bucket);
       if (i === undefined) return;
@@ -69,7 +82,7 @@ export function useNamespaceBuckets(targetBuckets = 40): {
       stat.trend[i] += r.total;
       stat.warnTrend[i] += r.warnings;
     });
-    const rows = [...byNs.values()].sort((a, b) => b.total - a.total);
+    const rows = [...byKey.values()].sort((a, b) => b.total - a.total);
     return { buckets, rows };
   }, [data]);
 
@@ -78,14 +91,14 @@ export function useNamespaceBuckets(targetBuckets = 40): {
 
 /** Keeps the top-N rows and folds the rest into a single "(other)" row. */
 export function foldOther(
-  rows: NamespaceStat[],
+  rows: DimensionStat[],
   bucketCount: number,
   topN: number,
-): NamespaceStat[] {
+): DimensionStat[] {
   if (rows.length <= topN) return rows;
   const head = rows.slice(0, topN);
-  const other: NamespaceStat = {
-    ns: OTHER_NS,
+  const other: DimensionStat = {
+    key: OTHER_KEY,
     total: 0,
     warnings: 0,
     trend: new Array<number>(bucketCount).fill(0),

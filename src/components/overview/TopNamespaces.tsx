@@ -1,7 +1,6 @@
 import React from "react";
-import { useUrlParams } from "../../hooks/useUrlParams";
-import { useNamespaceBuckets } from "../../hooks/useNamespaceBuckets";
-import { encodeFilters } from "../../lib/filters/urlCodec";
+import { useFilters } from "../../hooks/useFilters";
+import { useDimensionBuckets } from "../../hooks/useDimensionBuckets";
 import { formatCount } from "../../utils/format";
 import { Alert, Skeleton, Sparkline, cx } from "../../ui";
 import styles from "./TopNamespaces.module.css";
@@ -10,8 +9,8 @@ const TOP_N = 5;
 
 /** Top namespaces by volume with a per-namespace trend sparkline. */
 const TopNamespaces: React.FC = () => {
-  const { updateParams } = useUrlParams();
-  const { rows, isLoading, error } = useNamespaceBuckets(40);
+  const { drill } = useFilters();
+  const { rows, isLoading, error } = useDimensionBuckets("namespace", 40);
 
   if (error) {
     return (
@@ -36,16 +35,8 @@ const TopNamespaces: React.FC = () => {
     return <div className={styles.empty}>No events in the selected range</div>;
   }
 
-  const drill = (ns: string) => {
-    updateParams(
-      {
-        filters: encodeFilters([
-          { field: "namespace", op: "eq", values: [ns] },
-        ]),
-        where: undefined,
-      },
-      "/p/discover",
-    );
+  const drillNamespace = (ns: string) => {
+    drill([{ field: "namespace", op: "eq", values: [ns] }]);
   };
 
   return (
@@ -54,13 +45,13 @@ const TopNamespaces: React.FC = () => {
         const pct = row.total > 0 ? (row.warnings / row.total) * 100 : 0;
         return (
           <button
-            key={row.ns}
+            key={row.key}
             type="button"
             className={styles.row}
-            onClick={() => drill(row.ns)}
+            onClick={() => drillNamespace(row.key)}
             title={`${formatCount(row.total)} events · ${formatCount(row.warnings)} warnings`}
           >
-            <span className={styles.ns}>{row.ns}</span>
+            <span className={styles.ns}>{row.key}</span>
             <Sparkline
               points={row.trend}
               warnPoints={row.warnTrend}

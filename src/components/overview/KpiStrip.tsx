@@ -1,6 +1,6 @@
 import React from "react";
 import { useEventsQuery } from "../../hooks/useEventsQuery";
-import { useUrlParams } from "../../hooks/useUrlParams";
+import { useFilters } from "../../hooks/useFilters";
 import {
   buildKpiQuery,
   FAILED_POD_REASONS,
@@ -8,7 +8,6 @@ import {
   STORAGE_REASONS,
   type KpiRow,
 } from "../../lib/sql/overview";
-import { encodeFilters } from "../../lib/filters/urlCodec";
 import type { FilterChip } from "../../lib/filters/model";
 import { formatCount } from "../../utils/format";
 import { Alert, Skeleton, cx } from "../../ui";
@@ -69,23 +68,17 @@ const KPIS: KpiDef[] = [
 ];
 
 const KpiStrip: React.FC = () => {
-  const { updateParams } = useUrlParams();
-  const { data, error, isLoading } = useEventsQuery<KpiRow>(buildKpiQuery(), {
-    scope: "overview",
-  });
+  const { whereSql, drill } = useFilters();
+  const { data, error, isLoading } = useEventsQuery<KpiRow>(
+    buildKpiQuery(whereSql),
+    { scope: "overview" },
+  );
 
   if (error) {
     return <Alert tone="error">Failed to load metrics: {error.message}</Alert>;
   }
 
   const row = data?.[0];
-
-  const drill = (chips: DrillChips) => {
-    updateParams(
-      { filters: encodeFilters(chips), where: undefined },
-      "/p/discover",
-    );
-  };
 
   return (
     <div className={styles.strip}>

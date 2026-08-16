@@ -69,7 +69,7 @@
   vertical-align: middle;
 }
 
-.ns {
+.dimKey {
   font-family: var(--font-mono);
   max-width: 320px;
   overflow: hidden;

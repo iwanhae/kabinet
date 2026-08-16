@@ -4,9 +4,8 @@ import { useFilters } from "../hooks/useFilters";
 import { useSortState } from "../hooks/useSortState";
 import { useEventsInfinite } from "../hooks/useEventsInfinite";
 import { useEventsQuery } from "../hooks/useEventsQuery";
-import { useTimeRange, useUrlParams } from "../hooks/useUrlParams";
+import { useUrlParams } from "../hooks/useUrlParams";
 import { escapeSqlString } from "../lib/filters/compile";
-import FilterBar from "../components/explore/FilterBar";
 import EventsVirtualTable from "../components/explore/EventsVirtualTable";
 import EventDetailPanel from "../components/explore/detail/EventDetailPanel";
 import TimelineHistogram from "../components/charts/TimelineHistogram";
@@ -18,7 +17,6 @@ import styles from "./Explore.module.css";
 const Explore: React.FC = () => {
   const filters = useFilters();
   const { sort, toggleSort } = useSortState();
-  const { from, to } = useTimeRange();
   const { updateParams } = useUrlParams();
   const search = useSearch();
 
@@ -59,29 +57,12 @@ const Explore: React.FC = () => {
   const selected = selectedFromList ?? lookupData?.[0] ?? null;
   const panelOpen = Boolean(uidParam || rvParam);
 
-  const downloadHref = `/download?${new URLSearchParams({
-    where: filters.whereSql,
-    from,
-    to,
-  }).toString()}`;
-
   return (
     <div className={styles.page}>
-      <FilterBar
-        state={filters.state}
-        onAddChip={filters.addChip}
-        onUpdateChip={filters.updateChip}
-        onRemoveChip={filters.removeChip}
-        onSetRawMode={filters.setRawMode}
-        onSetChipsMode={filters.setChipsMode}
-        onClear={filters.clear}
-        downloadHref={downloadHref}
-      />
-
       {error && <Alert tone="error">Query failed: {error.message}</Alert>}
 
       <div className={styles.timelineCard}>
-        <TimelineHistogram where={filters.whereSql} height={120} />
+        <TimelineHistogram height={120} />
       </div>
 
       <div className={styles.resultsMeta}>

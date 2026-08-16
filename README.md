@@ -189,7 +189,7 @@ docker run -d \
 Once running, open your browser to `http://localhost:8080` to access:
 
 - **Overview** (`/`): aggregate insights — timeline, KPIs, namespace heatmap, top movers
-- **Namespaces** (`/p/namespaces`): per-namespace event/warning counts with trend sparklines
+- **Namespaces / Nodes / Components** (`/p/namespaces`, `/p/nodes`, `/p/components`): per-dimension event/warning counts with trend sparklines
 - **Explore** (`/p/discover`): filter-driven event exploration with infinite scroll
 - **Agent** (`/agent`): AI-powered event investigation
 

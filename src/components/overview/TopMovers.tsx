@@ -1,9 +1,9 @@
 import React, { useMemo } from "react";
 import dayjs from "dayjs";
 import { useEventsQuery } from "../../hooks/useEventsQuery";
-import { useTimeRange, useUrlParams } from "../../hooks/useUrlParams";
+import { useFilters } from "../../hooks/useFilters";
+import { useTimeRange } from "../../hooks/useUrlParams";
 import { buildTopMoversQuery, type TopMoverRow } from "../../lib/sql/overview";
-import { encodeFilters } from "../../lib/filters/urlCodec";
 import { formatCount } from "../../utils/format";
 import { Alert, Skeleton, cx } from "../../ui";
 import styles from "./TopMovers.module.css";
@@ -14,14 +14,17 @@ import styles from "./TopMovers.module.css";
  */
 const TopMovers: React.FC = () => {
   const { from, to } = useTimeRange();
-  const { updateParams } = useUrlParams();
+  const { whereSql, drill } = useFilters();
 
   const prevFrom = useMemo(() => {
     const spanSeconds = dayjs(to).diff(dayjs(from), "second");
     return dayjs(from).subtract(spanSeconds, "second").format();
   }, [from, to]);
 
-  const query = useMemo(() => buildTopMoversQuery(from, 10), [from]);
+  const query = useMemo(
+    () => buildTopMoversQuery(from, 10, whereSql),
+    [from, whereSql],
+  );
   const { data, error, isLoading } = useEventsQuery<TopMoverRow>(query, {
     from: prevFrom,
     to,
@@ -54,16 +57,8 @@ const TopMovers: React.FC = () => {
     return <div className={styles.empty}>No events in either period</div>;
   }
 
-  const drill = (reason: string) => {
-    updateParams(
-      {
-        filters: encodeFilters([
-          { field: "reason", op: "eq", values: [reason] },
-        ]),
-        where: undefined,
-      },
-      "/p/discover",
-    );
+  const drillReason = (reason: string) => {
+    drill([{ field: "reason", op: "eq", values: [reason] }]);
   };
 
   return (
@@ -81,7 +76,7 @@ const TopMovers: React.FC = () => {
             key={row.reason}
             type="button"
             className={styles.row}
-            onClick={() => drill(row.reason)}
+            onClick={() => drillReason(row.reason)}
             title={`current ${formatCount(row.current_count)} · previous ${formatCount(row.previous_count)}`}
           >
             <span className={styles.reason}>{row.reason}</span>

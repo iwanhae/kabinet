@@ -69,6 +69,32 @@ export function useFilters() {
     updateParams({ filters: undefined, where: undefined });
   };
 
+  /**
+   * Drill-down used by aggregate clicks (KPI cards, heatmap cells, dimension
+   * rows): merges the new chips into the current global filters — existing
+   * chips on the same field are replaced, everything else is kept — and
+   * navigates to Explore. Raw mode is discarded (SQL can't be merged).
+   */
+  const drill = (
+    chips: Array<Omit<FilterChip, "id">>,
+    extraParams?: { from?: string; to?: string },
+  ) => {
+    const newFields = new Set(chips.map((c) => c.field));
+    const kept =
+      state.mode === "chips"
+        ? state.chips.filter((c) => !newFields.has(c.field))
+        : [];
+    const merged = [...kept, ...chips.map((c) => ({ ...c, id: newChipId() }))];
+    updateParams(
+      {
+        filters: encodeFilters(merged),
+        where: undefined,
+        ...extraParams,
+      },
+      "/p/discover",
+    );
+  };
+
   return {
     state,
     whereSql,
@@ -78,5 +104,6 @@ export function useFilters() {
     setRawMode,
     setChipsMode,
     clear,
+    drill,
   };
 }

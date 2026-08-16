@@ -33,9 +33,9 @@ Three strictly separated layers that communicate only through the filesystem and
 **Frontend (`src/`):**
 - React 19, TypeScript 5.8 (strict), Vite 7, SWR, Wouter (router) — no component library: custom primitives in `src/ui/` styled with CSS Modules + design tokens (`src/styles/tokens.css`, dark mode = `[data-theme="dark"]` token override)
 - Charts: Apache ECharts (tree-shaken via `echarts/core`, wrapper in `src/components/charts/EChart.tsx`); tables: react-virtuoso
-- Routes: `/` (Overview: brushable timeline, one-query KPI strip, namespace×time heatmap, top namespaces/movers), `/p/namespaces` (per-namespace counts + trend sparklines), `/p/discover` (Explore: filter chips → virtualized infinite-scroll table → detail panel), `/agent` (AI investigation, tool-calling + streaming, lazy-loaded)
+- Routes: `/` (Overview: brushable timeline, one-query KPI strip, namespace×time heatmap, top namespaces/movers), `/p/namespaces` + `/p/nodes` (source.host) + `/p/components` (COALESCE(source.component, reportingComponent)) — shared per-dimension table (`components/dimension/DimensionPage`) with counts + trend sparklines, `/p/discover` (Explore: filter chips → virtualized infinite-scroll table → detail panel), `/agent` (AI investigation, tool-calling + streaming, lazy-loaded)
 - Data hooks: `useEventsQuery<T>(query, opts?)` (SWR, auto-injects time range from URL params like `now-30m`), `useEventsInfinite(whereSql, sort)` (keyset pagination, cursor = timestamp+uid, client-side uid dedup)
-- URL params are the source of truth (`from`/`to`/`filters`/`where`/`sort`/`uid`); filter fields are whitelisted in `src/lib/filters/fields.ts` (FIELD_DEFS registry) and compiled to escaped WHERE clauses
+- URL params are the source of truth (`from`/`to`/`filters`/`where`/`sort`/`uid`); filters are global like the time range — the FilterBar renders in Layout, params travel across tabs, and every data query applies the compiled WHERE; filter fields are whitelisted in `src/lib/filters/fields.ts` (FIELD_DEFS registry) and compiled to escaped WHERE clauses
 - Time-based SQL must use `TS_EXPR` (`src/lib/sql/expr.ts`) so null-`lastTimestamp` events aren't dropped
 - Every query's scan cost (duration/files/bytes) is recorded to a zustand store and shown in the footer `ScanCostBar`
 

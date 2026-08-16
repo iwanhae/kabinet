@@ -58,7 +58,8 @@ export const FIELD_DEFS: Record<FilterField, FieldDef> = {
   component: {
     key: "component",
     label: "Component",
-    sqlExpr: "source.component",
+    // Controller-emitted events (events.k8s.io) only set reportingComponent.
+    sqlExpr: "COALESCE(source.component, reportingComponent)",
     ops: ["eq", "neq", "in"],
     suggest: "distinct",
   },

@@ -2,15 +2,13 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  /* Fill the viewport between the top bar and the scan-cost bar. */
-  height: calc(100vh - 52px - 28px - 2 * var(--sp-5));
-  min-height: 480px;
 }
 
 .timelineCard {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
   padding: var(--sp-3) var(--sp-4);
   flex-shrink: 0;
 }
@@ -24,10 +22,12 @@
 }
 
 .tableWrap {
-  flex: 1;
-  min-height: 240px;
+  /* Definite height for the virtualized table: fill the viewport below the
+     top bar, global filter bar, timeline card, and scan-cost bar. */
+  height: max(400px, calc(100vh - 480px));
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }

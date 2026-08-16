@@ -49,7 +49,9 @@ src/
 │   └── agent/       # OpenAI client, tool-calling prompts, /query executor
 ├── components/
 │   ├── charts/      # EChart wrapper, TimelineHistogram, CabinetHeatmap, SimpleBarLine
-│   ├── explore/     # FilterBar, chip editor, EventsVirtualTable, detail panel
+│   ├── dimension/   # DimensionPage — generic group-by table (Namespaces/Nodes/Components tabs)
+│   ├── filters/     # global FilterBar + chip editor (rendered in Layout)
+│   ├── explore/     # EventsVirtualTable, columns, detail panel
 │   ├── overview/    # KpiStrip, TopMovers
 │   ├── agent/       # CaseTranscript, ExhibitCard, Composer, history/settings
 │   ├── Layout.tsx   # top bar (wordmark, nav, TimeRangePicker, theme toggle)
@@ -57,7 +59,7 @@ src/
 ├── contexts/        # ThemeContext (data-theme), RefreshContext (manual refresh)
 ├── hooks/           # useEventsQuery, useEventsInfinite, useFilters, useSortState, …
 ├── stores/          # queryMetaStore (zustand) — scan-cost telemetry
-├── pages/           # Overview (/), Namespaces (/p/namespaces), Explore (/p/discover), AgentPage (/agent, lazy)
+├── pages/           # Overview (/), Namespaces/Nodes/Components (thin DimensionPage wrappers), Explore (/p/discover), AgentPage (/agent, lazy)
 ├── types/           # EventResult, agent case-file types
 └── utils/           # time buckets, relative time parsing, formatters
 ```
@@ -83,9 +85,11 @@ All backend access goes through the hooks — never call `fetch` in components.
 - Chart bucketing: `getDynamicInterval(from, to, targetBuckets)` returns a structured `Interval`; render SQL with `intervalToSql()` and compute bucket ends with `bucketEnd()` (`src/utils/time.ts`).
 - **Always bucket/sort on `TS_EXPR`** (`src/lib/sql/expr.ts`) — `COALESCE(lastTimestamp, eventTime, metadata.creationTimestamp)` — or events.k8s.io events with null `lastTimestamp` silently vanish.
 
-### 3. Filters (Explore)
+### 3. Filters (global)
 
+- Filters are **global state like the time range**: the FilterBar renders in `Layout` on every data tab, filter params travel across navigation (`useNavigation`), and every query hook/builder applies `whereSql` (Overview KPIs/timeline/heatmap/movers, dimension tabs, Explore).
 - Filter state is chips (`FilterChip { field, op, values }`) serialized into the `?filters=` URL param; raw SQL mode uses `?where=` (legacy links keep working). The two are mutually exclusive.
+- Aggregate drill-downs go through `useFilters().drill(chips)`: it merges into the current filters (replacing chips on the same field) and navigates to Explore.
 - **`FIELD_DEFS`** (`src/lib/filters/fields.ts`) is the single registry driving the chip editor, autocomplete, and the detail panel's click-to-filter. To add a filterable field, add it there — nowhere else.
 - The compiler (`src/lib/filters/compile.ts`) escapes values (`''` doubling; `ILIKE` patterns additionally escape `%_\` with `ESCAPE '\'`). SQL identifiers come only from the registry — never interpolate user input as an identifier.
 - Aggregate click-to-drill (KPI cards, heatmap cells, top movers) composes chips via `encodeFilters()` and navigates to `/p/discover`.
