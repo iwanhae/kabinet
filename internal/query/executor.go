@@ -110,7 +110,8 @@ func (e *Executor) buildEventsQuery(query string, start, end time.Time) (string,
 		fromClause = "(" + strings.Join(sources, " UNION ALL BY NAME ") + ")"
 	}
 
-	return strings.Replace(query, "$events", fromClause, 1), files, nil
+	// ReplaceAll: queries may reference $events multiple times (CTEs, subqueries).
+	return strings.ReplaceAll(query, "$events", fromClause), files, nil
 }
 
 // RangeQuery executes a query with the $events macro over [start, end] and

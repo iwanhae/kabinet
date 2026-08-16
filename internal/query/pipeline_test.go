@@ -164,6 +164,20 @@ func TestPipelineConvertAndQuery(t *testing.T) {
 	if len(rows) != 1 || rows[0]["c"] != int64(0) {
 		t.Fatalf("expected count 0 for empty range, got %v", rows)
 	}
+
+	// $events referenced multiple times (CTE + main query) must all resolve.
+	rows, _, err = executor.RangeQuery(context.Background(), `
+		WITH top_ns AS (
+			SELECT metadata.namespace AS ns FROM $events GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1
+		)
+		SELECT count(*)::BIGINT AS c FROM $events
+		WHERE metadata.namespace IN (SELECT ns FROM top_ns)`, start, end)
+	if err != nil {
+		t.Fatalf("multi-$events query failed: %v", err)
+	}
+	if len(rows) != 1 || rows[0]["c"] != int64(3) {
+		t.Fatalf("expected count 3 for multi-$events query, got %v", rows)
+	}
 }
 
 func TestMergeDeduplicatesAcrossFiles(t *testing.T) {
