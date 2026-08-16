@@ -45,22 +45,20 @@ src/
 ├── lib/
 │   ├── api/         # queryClient.ts — postQuery<T> returning results + scan meta
 │   ├── filters/     # filter chip model, FIELD_DEFS registry, WHERE compiler, URL codec
-│   ├── sql/         # TS_EXPR, keyset pagination builder, overview queries
-│   └── agent/       # OpenAI client, tool-calling prompts, /query executor
+│   └── sql/         # TS_EXPR, keyset pagination builder, overview queries
 ├── components/
 │   ├── charts/      # EChart wrapper, TimelineHistogram, CabinetHeatmap, SimpleBarLine
 │   ├── dimension/   # DimensionPage — generic group-by table (Namespaces/Nodes/Components tabs)
 │   ├── filters/     # global FilterBar + chip editor (rendered in Layout)
 │   ├── explore/     # EventsVirtualTable, columns, detail panel
 │   ├── overview/    # KpiStrip, TopMovers
-│   ├── agent/       # CaseTranscript, ExhibitCard, Composer, history/settings
 │   ├── Layout.tsx   # top bar (wordmark, nav, TimeRangePicker, theme toggle)
 │   └── ScanCostBar.tsx  # footer "ledger stamp": last query's ms / files / bytes
 ├── contexts/        # ThemeContext (data-theme), RefreshContext (manual refresh)
 ├── hooks/           # useEventsQuery, useEventsInfinite, useFilters, useSortState, …
 ├── stores/          # queryMetaStore (zustand) — scan-cost telemetry
-├── pages/           # Overview (/), Namespaces/Nodes/Components (thin DimensionPage wrappers), Explore (/p/discover), AgentPage (/agent, lazy)
-├── types/           # EventResult, agent case-file types
+├── pages/           # Overview (/), Namespaces/Nodes/Components (thin DimensionPage wrappers), Explore (/p/discover), McpPage (/p/mcp)
+├── types/           # EventResult types
 └── utils/           # time buckets, relative time parsing, formatters
 ```
 
@@ -106,9 +104,9 @@ Zustand is only for ephemeral cross-cutting UI state that has no business in the
 - Get colors from `useChartTokens()` so dark mode works.
 - `TimelineHistogram` supports brush-drag and bar-click to zoom the global time range; reuse it instead of writing new time histograms.
 
-### 6. Agent page
+### 6. MCP page
 
-Client-side OpenAI tool-calling loop (`useInvestigation`): the model calls `run_sql` (each call becomes a numbered **exhibit** in the case file) and `show_chart`; the final analysis streams as markdown. Query results are summarized (row count + first 30 rows) before re-entering model context. Config and case history persist in localStorage. The page is lazy-loaded (`React.lazy`) to keep the OpenAI SDK out of the main bundle.
+Static documentation page (`/p/mcp`, `src/pages/McpPage.tsx`) describing the built-in MCP server: endpoint URL (derived from `window.location.origin`), client setup snippets, the available tools, and a condensed query guide. The actual MCP server lives in the Go backend (`internal/mcpserver`); the tool descriptions there embed the full query guide, so keep the two in sync when the schema or query rules change. The FilterBar is hidden on this page (see `Layout.tsx`).
 
 ### 7. Creating new components & pages
 

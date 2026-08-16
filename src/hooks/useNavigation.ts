@@ -8,7 +8,7 @@ export interface NavigationOptions {
     | "namespaces"
     | "nodes"
     | "components"
-    | "agent";
+    | "mcp";
   params?: {
     where?: string;
     from?: string;
@@ -31,12 +31,7 @@ export const useNavigation = () => {
 
   return (options: NavigationOptions): string => {
     if (options.page === "insight") options.page = "";
-    const base =
-      options.page === "agent"
-        ? "/agent"
-        : options.page
-          ? `/p/${options.page}`
-          : "/";
+    const base = options.page ? `/p/${options.page}` : "/";
     const params: Record<string, string> = {
       from: fromParam,
       to: toParam,

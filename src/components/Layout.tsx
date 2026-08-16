@@ -40,7 +40,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       path: "/p/discover",
       href: navigate({ page: "discover" }),
     },
-    { text: "Agent", path: "/agent", href: navigate({ page: "agent" }) },
+    { text: "MCP", path: "/p/mcp", href: navigate({ page: "mcp" }) },
   ];
 
   return (
@@ -79,7 +79,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       </header>
 
       <main className={styles.main}>
-        {location !== "/agent" && (
+        {location !== "/p/mcp" && (
           <div className={styles.filterZone}>
             <FilterBar />
           </div>

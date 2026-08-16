@@ -13,6 +13,7 @@ import (
 	"net/http/pprof"
 	"time"
 
+	"github.com/iwanhae/kabinet/internal/mcpserver"
 	"github.com/iwanhae/kabinet/internal/query"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
@@ -41,6 +42,9 @@ func New(executor *query.Executor, stats StatsFunc, port string, distFS embed.FS
 	mux.HandleFunc("/query", s.handleQuery)
 	mux.HandleFunc("/stats", s.handleStats)
 	mux.HandleFunc("/download", s.handleDownload)
+
+	// MCP endpoint (streamable HTTP) for AI assistants
+	mux.Handle("/mcp", mcpserver.NewHandler(executor, mcpserver.StatsFunc(stats)))
 
 	// pprof profiling endpoints
 	mux.HandleFunc("/debug/pprof/", pprof.Index)

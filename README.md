@@ -46,7 +46,7 @@ The backend is split into three strictly separated layers that communicate only 
 On top of that sits the **Web Interface**, a React UI built for reviewing ~1M events/day through an aggregate-first funnel:
     - **Overview** (`/`): brushable event timeline, one-query KPI strip, "The Cabinet" namespace×time heatmap, and top-moving reasons vs the previous period — every aggregate is clickable and drills into Explore.
     - **Explore** (`/p/discover`): structured filter chips (with a raw-SQL escape hatch) over a virtualized, infinitely-scrolling event table with keyset pagination, plus a config-driven detail panel.
-    - **Agent** (`/agent`): AI investigation via OpenAI tool calling — each SQL query is filed as a numbered exhibit, findings stream in as markdown.
+    - **MCP** (`/p/mcp`): integration guide for the built-in Model Context Protocol server (`/mcp`), which lets AI assistants query events directly with SQL.
     - **Scan receipt**: every query's cost (duration, files, bytes scanned) is stamped in the footer.
     - **Time Range Management**: flexible relative/absolute ranges synchronized to the URL, with manual refresh.
 
@@ -98,12 +98,12 @@ graph LR
 ├── src/                     # React frontend source code
 │   ├── styles/              # Design tokens (CSS custom properties) + global styles
 │   ├── ui/                  # Custom component primitives (CSS Modules)
-│   ├── lib/                 # API client, filter model/compiler, SQL builders, agent
-│   ├── components/          # Feature components (charts, explore, overview, agent)
+│   ├── lib/                 # API client, filter model/compiler, SQL builders
+│   ├── components/          # Feature components (charts, explore, overview)
 │   ├── contexts/            # React contexts (theme, refresh)
 │   ├── hooks/               # Custom hooks (data fetching, filters, URL params)
 │   ├── stores/              # Zustand store (query scan-cost telemetry)
-│   ├── pages/               # Main application pages (Overview, Explore, Agent)
+│   ├── pages/               # Main application pages (Overview, Explore, MCP)
 │   ├── types/               # TypeScript type definitions
 │   └── utils/               # Utility functions (time, formatting)
 ├── public/                  # Static assets
@@ -191,7 +191,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 - **Overview** (`/`): aggregate insights — timeline, KPIs, namespace heatmap, top movers
 - **Namespaces / Nodes / Components** (`/p/namespaces`, `/p/nodes`, `/p/components`): per-dimension event/warning counts with trend sparklines
 - **Explore** (`/p/discover`): filter-driven event exploration with infinite scroll
-- **Agent** (`/agent`): AI-powered event investigation
+- **MCP** (`/p/mcp`): guide for connecting AI assistants to the built-in MCP server at `/mcp`
 
 ## Key Features
 

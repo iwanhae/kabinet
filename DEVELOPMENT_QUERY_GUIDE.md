@@ -242,10 +242,24 @@ curl -L "http://localhost:8080/download?from=2025-01-01T00:00:00Z&to=2025-01-02T
   --output events.jsonl.gz
 ```
 
+### MCP Endpoint: `/mcp`
+
+A built-in Model Context Protocol server (streamable HTTP, stateless) exposes the same query engine to AI assistants as two tools:
+
+- `query_events(query, start, end)` — runs a DuckDB SQL query over `$events`; results capped at 1000 rows
+- `get_stats()` — same payload as `GET /stats`
+
+The `query_events` tool description embeds a full query guide (rules, schema, examples), so connected models need no extra prompting. Connect with e.g.:
+
+```bash
+claude mcp add --transport http kabinet http://localhost:8080/mcp
+```
+
 ### Web Interface Routes
 
 - `GET /` - Overview (aggregate insights: timeline, KPIs, heatmap, top movers)
 - `GET /p/discover` - Explore (filter-driven event exploration)
+- `GET /p/mcp` - MCP integration guide
 
 These routes serve the React frontend application for interactive data exploration.
 
