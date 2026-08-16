@@ -177,7 +177,7 @@ Refer to the `getDynamicInterval` function in `src/utils/time.ts` for an example
 
 **Example: Dynamically bucketed hourly/daily/weekly event count**
 
-This query pattern is used by the `EventsTimelineChart` component. The `${interval}` is dynamically set by the frontend (e.g., '15 second', '1 hour', '1 day').
+This query pattern is used by the `TimelineHistogram` component. The `${interval}` is dynamically set by the frontend (e.g., '15 second', '1 hour', '1 day').
 
 ```sql
 SELECT
@@ -244,8 +244,8 @@ curl -L "http://localhost:8080/download?from=2025-01-01T00:00:00Z&to=2025-01-02T
 
 ### Web Interface Routes
 
-- `GET /` - Analytics Dashboard (main insights page)
-- `GET /p/discover` - Query builder and event exploration interface
+- `GET /` - Overview (aggregate insights: timeline, KPIs, heatmap, top movers)
+- `GET /p/discover` - Explore (filter-driven event exploration)
 
 These routes serve the React frontend application for interactive data exploration.
 

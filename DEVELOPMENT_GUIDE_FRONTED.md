@@ -2,180 +2,116 @@
 
 Welcome to the Kabinet frontend! This guide provides the necessary information to get you started with development.
 
-**Current Status**: The frontend is fully implemented and production-ready, featuring a comprehensive analytics dashboard, advanced query builder, and real-time data visualization capabilities.
+The UI is designed around one constraint: reviewing ~1M events/day. Users never start from raw rows — they start from aggregates (timeline, heatmap, KPIs) and drill down into a virtualized, infinitely-scrolling event stream.
 
 ## Tech Stack
 
-- **Framework**: [React](https://reactjs.org/) with [Vite](https://vitejs.dev/)
-- **Language**: [TypeScript](https://www.typescriptlang.org/)
-- **UI Library**: [Material-UI (MUI)](https://mui.com/)
-- **Data Fetching**: [SWR](https://swr.vercel.app/)
-- **State Management**: React Context API + URL parameters
-- **Charts**: [ApexCharts](https://apexcharts.com/) with [react-apexcharts](https://github.com/apexcharts/react-apexcharts)
-- **Date & Time**: [Day.js](https://day.js.org/) with `@mui/x-date-pickers`
+- **Framework**: [React 19](https://react.dev/) with [Vite](https://vitejs.dev/)
+- **Language**: [TypeScript](https://www.typescriptlang.org/) (strict)
+- **UI**: custom lightweight component system (`src/ui/`) — no component library
+- **Styling**: CSS Modules + design tokens (`src/styles/tokens.css`), no runtime CSS-in-JS
+- **Charts**: [Apache ECharts](https://echarts.apache.org/) (tree-shaken via `echarts/core`, canvas renderer)
+- **Table virtualization**: [react-virtuoso](https://virtuoso.dev/) (`TableVirtuoso`)
+- **Data Fetching**: [SWR](https://swr.vercel.app/) (+ `swr/infinite` for keyset pagination)
+- **State**: URL parameters (source of truth) + React Context + [Zustand](https://zustand.docs.pmnd.rs/) (ephemeral query telemetry only)
+- **Icons**: [lucide-react](https://lucide.dev/)
+- **Fonts**: Inter Variable (UI) + IBM Plex Mono (data) via `@fontsource`
 - **Routing**: [Wouter](https://github.com/molefrog/wouter)
-- **Styling**: [MUI's `styled` API](https://mui.com/system/styled/) & [Emotion](https://emotion.sh/)
+- **Date & Time**: [Day.js](https://day.js.org/)
 
 ## Getting Started
 
-1.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
-2.  **Run the development server**
+```bash
+npm install
+npm run dev     # http://localhost:5173 (proxies /query, /download to :8080)
+npm run lint    # eslint --fix + tsc -b (must pass before finishing work)
+```
 
-    ```bash
-    npm run dev
-    ```
+## Design System
 
-    The application will be available at `http://localhost:5173`.
+The visual identity: rounded, friendly, blue. Interactive chrome (buttons, focus rings, active nav, selection) uses the `--accent` blue family. Data keeps its own semantic pair: `--steel` blue for Normal events, `--signal` red for Warning events (`--alert` shares the red family for UI errors).
 
-3.  **Linting**:
-    ```bash
-    npm run lint
-    ```
+- **Tokens**: `src/styles/tokens.css` defines all colors, spacing, radii, fonts as CSS custom properties. Dark mode is a `[data-theme="dark"]` override of the same tokens (toggled on `<html>` by `ThemeContext`). **Never hardcode hex values in components** — that's what broke dark mode in the previous design.
+- **Canvas charts can't read CSS variables**, so `src/components/charts/chartTheme.ts` mirrors the palette in TS. If you change tokens.css, update it too.
+- **Typography**: Inter for UI text; IBM Plex Mono is the "data voice" — timestamps, counts, reason codes, SQL, file paths. Use the global `.mono` class or `--font-mono`.
+- **Primitives** (`src/ui/`): Button, IconButton, Chip, Card, Alert, Skeleton, Spinner, TextInput/TextArea/Select, Popover, Modal, Drawer, Accordion. Import from `../ui`. Add new primitives there only if used by 2+ features.
 
 ## Project Structure
 
-The `src` directory is organized as follows:
-
 ```
 src/
-├── assets/         # Static assets like images and SVGs
-├── components/     # Reusable React components
-├── contexts/       # React contexts for global state (theme, refresh)
-├── hooks/          # Custom React hooks (data fetching, URL params, navigation)
-├── pages/          # Page components corresponding to routes
-├── types/          # TypeScript type definitions
-├── utils/          # Utility functions (time parsing, date handling)
-├── App.tsx         # Main application component, handles routing and global setup
-├── main.tsx        # Application entry point
-├── index.css       # Global styles
-└── theme.ts        # MUI theme configuration
+├── styles/          # tokens.css (design tokens), global.css (reset, base)
+├── ui/              # component primitives (CSS Modules each)
+├── lib/
+│   ├── api/         # queryClient.ts — postQuery<T> returning results + scan meta
+│   ├── filters/     # filter chip model, FIELD_DEFS registry, WHERE compiler, URL codec
+│   ├── sql/         # TS_EXPR, keyset pagination builder, overview queries
+│   └── agent/       # OpenAI client, tool-calling prompts, /query executor
+├── components/
+│   ├── charts/      # EChart wrapper, TimelineHistogram, CabinetHeatmap, SimpleBarLine
+│   ├── explore/     # FilterBar, chip editor, EventsVirtualTable, detail panel
+│   ├── overview/    # KpiStrip, TopMovers
+│   ├── agent/       # CaseTranscript, ExhibitCard, Composer, history/settings
+│   ├── Layout.tsx   # top bar (wordmark, nav, TimeRangePicker, theme toggle)
+│   └── ScanCostBar.tsx  # footer "ledger stamp": last query's ms / files / bytes
+├── contexts/        # ThemeContext (data-theme), RefreshContext (manual refresh)
+├── hooks/           # useEventsQuery, useEventsInfinite, useFilters, useSortState, …
+├── stores/          # queryMetaStore (zustand) — scan-cost telemetry
+├── pages/           # Overview (/), Namespaces (/p/namespaces), Explore (/p/discover), AgentPage (/agent, lazy)
+├── types/           # EventResult, agent case-file types
+└── utils/           # time buckets, relative time parsing, formatters
 ```
 
 ---
 
 ## Core Concepts & Conventions
 
-### 1. Data Fetching with `useEventsQuery`
+### 1. Data fetching
 
-All data fetching from the backend API should be handled by the `useEventsQuery` custom hook. This hook abstracts away the complexities of data fetching, caching, and state management, allowing components to focus solely on displaying the data.
+All backend access goes through the hooks — never call `fetch` in components.
 
-**Location**: `src/hooks/useEventsQuery.ts`
+- **`useEventsQuery<T>(query, opts?)`** (`src/hooks/useEventsQuery.ts`) — single query within the global time range. Pass `null` to skip fetching. `opts.from/to` override the range (used by TopMovers' doubled window); `opts.scope` tags the cache and the scan-cost recording.
+- **`useEventsQueryMeta<T>`** — same, but returns `{ results, meta }` including `duration_ms`, `files`, `total_files_size_bytes`.
+- **`useEventsInfinite(whereSql, sort)`** (`src/hooks/useEventsInfinite.ts`) — keyset-paginated infinite scroll for the Explore table. Cursor is `(timestamp, metadata.uid)` (timestamps are second-precision, ties are common). Pre-compaction WAL duplicates (same uid) are deduplicated client-side keeping the highest resourceVersion.
+- Every fetch records its scan cost into `queryMetaStore`, which `ScanCostBar` renders in the footer.
+- Global SWR config lives in `App.tsx` (`keepPreviousData`, dedup, retry). Manual refresh works by folding `RefreshContext`'s counter into every SWR key — do not call `mutate()` globally.
 
-**Core Idea**: The hook takes a SQL query string as an argument and automatically combines it with the current global time range from the Zustand store. It uses **SWR** to handle caching, revalidation, and managing loading/error states.
+### 2. Time handling
 
-**How to Use**:
+- The global range lives in URL params (`from`, `to`) as raw strings (`now-30m`, ISO). `useTimeRange()` returns both raw and parsed values plus `setTimeRange()`.
+- Relative syntax: `now-<n><s|m|h|d|w>` (`src/utils/timeRange.ts`).
+- Chart bucketing: `getDynamicInterval(from, to, targetBuckets)` returns a structured `Interval`; render SQL with `intervalToSql()` and compute bucket ends with `bucketEnd()` (`src/utils/time.ts`).
+- **Always bucket/sort on `TS_EXPR`** (`src/lib/sql/expr.ts`) — `COALESCE(lastTimestamp, eventTime, metadata.creationTimestamp)` — or events.k8s.io events with null `lastTimestamp` silently vanish.
 
-To fetch data, import the hook and pass your SQL query. The hook is **generic**, meaning you must provide a type or interface that describes the shape of the expected result objects. This provides full type safety for your data.
+### 3. Filters (Explore)
 
-**Example (`src/pages/Insight.tsx`)**:
+- Filter state is chips (`FilterChip { field, op, values }`) serialized into the `?filters=` URL param; raw SQL mode uses `?where=` (legacy links keep working). The two are mutually exclusive.
+- **`FIELD_DEFS`** (`src/lib/filters/fields.ts`) is the single registry driving the chip editor, autocomplete, and the detail panel's click-to-filter. To add a filterable field, add it there — nowhere else.
+- The compiler (`src/lib/filters/compile.ts`) escapes values (`''` doubling; `ILIKE` patterns additionally escape `%_\` with `ESCAPE '\'`). SQL identifiers come only from the registry — never interpolate user input as an identifier.
+- Aggregate click-to-drill (KPI cards, heatmap cells, top movers) composes chips via `encodeFilters()` and navigates to `/p/discover`.
 
-```tsx
-import React from "react";
-import { useEventsQuery } from "../hooks/useEventsQuery";
-import { CircularProgress, Alert, Paper, Typography } from "@mui/material";
+### 4. URL is the source of truth
 
-// 1. Define the type for the expected data objects
-interface ReasonCount {
-  reason: string;
-  count: number;
-}
+Everything shareable lives in URL params: `from`, `to`, `filters`/`where`, `sort` (`ts:desc`), `uid` (detail panel selection; legacy `resourceVersion` still honored). Derive state from `useSearch()` via memoized hooks (`useFilters`, `useSortState`, `useTimeRange`); mutate only through `updateParams`. Do not duplicate URL state into `useState`.
 
-const TopReasonsChart = () => {
-  // 2. Define the SQL query
-  const query =
-    "SELECT reason, COUNT(*) as count FROM $events WHERE type = 'Warning' GROUP BY reason ORDER BY count DESC LIMIT 10";
+Zustand is only for ephemeral cross-cutting UI state that has no business in the URL (currently just `queryMetaStore`).
 
-  // 3. Call the hook with the type and query
-  const { data, error, isLoading } = useEventsQuery<ReasonCount>(query);
+### 5. Charts
 
-  if (isLoading) return <CircularProgress />;
-  if (error)
-    return <Alert severity="error">Failed to load data: {error.message}</Alert>;
+- Use the `EChart` wrapper (`src/components/charts/EChart.tsx`) — never `echarts-for-react`. Register new chart/component types in `echartsSetup.ts` (tree-shaking).
+- Get colors from `useChartTokens()` so dark mode works.
+- `TimelineHistogram` supports brush-drag and bar-click to zoom the global time range; reuse it instead of writing new time histograms.
 
-  return (
-    <Paper>
-      <Typography variant="h6">Top 10 Warning Reasons</Typography>
-      <ul>
-        {/* 4. 'data' is now fully typed as 'ReasonCount[] | undefined' */}
-        {data?.map((item) => (
-          <li key={item.reason}>
-            {item.reason}: {item.count}
-          </li>
-        ))}
-      </ul>
-    </Paper>
-  );
-};
-```
+### 6. Agent page
 
-**Conditional Fetching**: If you pass `null` as the query, the hook will not trigger a request. This is useful when you need to wait for some condition to be met before fetching data.
+Client-side OpenAI tool-calling loop (`useInvestigation`): the model calls `run_sql` (each call becomes a numbered **exhibit** in the case file) and `show_chart`; the final analysis streams as markdown. Query results are summarized (row count + first 30 rows) before re-entering model context. Config and case history persist in localStorage. The page is lazy-loaded (`React.lazy`) to keep the OpenAI SDK out of the main bundle.
 
-### 2. Global State: Time Range Management
+### 7. Creating new components & pages
 
-A critical piece of global state is the **time range**, which is automatically used by the `useEventsQuery` hook.
-
-**Location**: `src/hooks/useUrlParams.ts` and `src/contexts/RefreshContext.tsx`
-
-**Core Idea**: The time range is managed through URL query parameters and React Context, providing a clean separation of concerns. The system holds both the raw string values (e.g., `now-1h`) and the parsed ISO 8601 timestamps. Any component using `useEventsQuery` will automatically re-fetch data when the time range changes.
-
-**Key Hooks:**
-- `useTimeRange()`: Gets current time range values and provides `setTimeRange()` function
-- `useUrlParams()`: Lower-level hook for managing all URL parameters
-- `useRefresh()`: Context hook for manual refresh functionality
-
-**How to Update**: The time range should be updated via the `TimeRangePicker` component, which provides a UI for selecting quick ranges or absolute time frames. Components can also programmatically update the time range using the `setTimeRange()` function.
-
-**Manual Refresh**: When a relative time range (e.g., "Last 30 minutes") is active, a **Refresh button** appears next to the picker. This allows the user to manually update the time range to the current time, triggering a data refresh across the application. The automatic refresh logic has been removed in favor of this manual control to improve performance and predictability.
-
-### 3. Styling
-
-This project uses **Material-UI (MUI)** as its primary component library. For styling, we follow a specific convention to maintain consistency and readability.
-
-- **Primary Method: `styled` API**: For components with complex or reusable styles, always prefer using the `styled` utility from `@mui/material/styles`.
-- **Secondary Method: `sx` Prop**: For simple, one-off styles, it's acceptable to use the `sx` prop.
-- **Theme**: All theme-related values (colors, fonts, etc.) are defined in `src/theme.ts`. Always use theme tokens (e.g., `theme.palette.primary.main`) in styled components.
-
-### 4. Routing
-
-We use **Wouter** for client-side routing due to its minimal footprint and hook-based API.
-
-- **Route Definitions**: All routes are defined in `src/App.tsx`.
-- **Navigation**: Use the `<Link>` component for links and the `useLocation` hook for programmatic navigation.
-
-### 5. Available Components
-
-The project includes a comprehensive set of pre-built components:
-
-**Core Components:**
-- `Layout.tsx` - Main application layout with navigation and theme toggle
-- `TimeRangePicker.tsx` - Advanced time range selection with quick presets and custom ranges
-- `QueryForm.tsx` - SQL query input form with execution controls
-
-**Data Visualization:**
-- `EventsTimelineChart.tsx` - Interactive timeline chart using ApexCharts
-- `MetricsOverview.tsx` - Key metrics dashboard with cards
-- `MetricCard.tsx` - Individual metric display component
-- `EventsTable.tsx` - Sortable, searchable events table
-- `EventDetailDrawer.tsx` - Detailed event information in a sliding drawer
-
-**Analytics Components:**
-- `TopNoisyNamespaces.tsx` - Chart showing most active namespaces
-- `TopWarningReasons.tsx` - Breakdown of warning event reasons
-- `RecentCriticalEvents.tsx` - List of recent critical events
-
-**Utility Components:**
-- `ChartPlaceholder.tsx` - Loading placeholder for charts
-- `Link.tsx` - Custom link component with Wouter integration
-
-### 6. Creating New Components & Pages
-
-- **Reusable Components**: Create inside `src/components/`.
-- **Page Components**: Create inside `src/pages/` and add the corresponding route to `App.tsx`.
-- **Component Logic**: Keep components focused. Separate complex logic into custom hooks (like `useEventsQuery`).
-- **Data Fetching**: Always use `useEventsQuery` for API calls - it handles caching, loading states, and time range integration automatically.
+- Reusable pieces → `src/components/<feature>/`, primitives → `src/ui/`.
+- Pages → `src/pages/` + route in `App.tsx`.
+- Complex logic → custom hooks; keep components presentational.
+- Styles → CSS Module next to the component, referencing tokens only.
 
 ---
 

@@ -31,10 +31,13 @@ Three strictly separated layers that communicate only through the filesystem and
 **Dedup semantics:** one row per `(metadata.uid, metadata.resourceVersion)`, enforced at every compaction/merge pass — never at query time, so recently re-listed events may appear duplicated until their segments are compacted.
 
 **Frontend (`src/`):**
-- React 19, TypeScript 5.8 (strict), Vite 7, MUI 7, SWR, Wouter (router), Zustand (state)
-- Routes: `/` (Insight dashboard), `/p/discover` (SQL query builder), `/agent` (AI investigation via OpenAI)
-- `useEventsQuery<T>(query)` — primary data hook; SWR-based, auto-injects time range from URL params (`from`, `to` in relative format like `now-30m`)
-- `src/lib/agent/` — OpenAI integration for AI-powered K8s event investigation
+- React 19, TypeScript 5.8 (strict), Vite 7, SWR, Wouter (router) — no component library: custom primitives in `src/ui/` styled with CSS Modules + design tokens (`src/styles/tokens.css`, dark mode = `[data-theme="dark"]` token override)
+- Charts: Apache ECharts (tree-shaken via `echarts/core`, wrapper in `src/components/charts/EChart.tsx`); tables: react-virtuoso
+- Routes: `/` (Overview: brushable timeline, one-query KPI strip, namespace×time heatmap, top namespaces/movers), `/p/namespaces` (per-namespace counts + trend sparklines), `/p/discover` (Explore: filter chips → virtualized infinite-scroll table → detail panel), `/agent` (AI investigation, tool-calling + streaming, lazy-loaded)
+- Data hooks: `useEventsQuery<T>(query, opts?)` (SWR, auto-injects time range from URL params like `now-30m`), `useEventsInfinite(whereSql, sort)` (keyset pagination, cursor = timestamp+uid, client-side uid dedup)
+- URL params are the source of truth (`from`/`to`/`filters`/`where`/`sort`/`uid`); filter fields are whitelisted in `src/lib/filters/fields.ts` (FIELD_DEFS registry) and compiled to escaped WHERE clauses
+- Time-based SQL must use `TS_EXPR` (`src/lib/sql/expr.ts`) so null-`lastTimestamp` events aren't dropped
+- Every query's scan cost (duration/files/bytes) is recorded to a zustand store and shown in the footer `ScanCostBar`
 
 ## Build, Test, and Development Commands
 
@@ -79,5 +82,5 @@ docker build -t kabinet .  # multi-stage: node build -> go build with CGO_ENABLE
 - `go test ./...` — must pass
 
 ## Development Guides
-- Frontend: `DEVELOPMENT_GUIDE_FRONTED.md` — stack, routing, `useEventsQuery`, time-range handling, component patterns
+- Frontend: `DEVELOPMENT_GUIDE_FRONTED.md` — design tokens, `src/ui` primitives, data hooks, filter model, chart conventions
 - API/Querying: `DEVELOPMENT_QUERY_GUIDE.md` — `POST /query` payload/response, `$events` usage, performance tips

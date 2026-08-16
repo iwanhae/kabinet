@@ -43,11 +43,12 @@ The backend is split into three strictly separated layers that communicate only 
     - Provides `/stats` endpoint for system statistics and metrics.
     - Serves the web interface as static files from the embedded filesystem.
 
-On top of that sits the **Web Interface**, a modern React-based UI featuring:
-    - **Analytics Dashboard**: Real-time insights with event timeline charts, top noisy namespaces, warning reasons, and recent critical events.
-    - **Discover Page**: Advanced SQL query builder with syntax highlighting, result tables, and event detail views.
-    - **Time Range Management**: Flexible time range selection with URL synchronization and manual refresh controls.
-    - **Interactive Visualizations**: ApexCharts-powered timeline charts and responsive Material-UI components.
+On top of that sits the **Web Interface**, a React UI built for reviewing ~1M events/day through an aggregate-first funnel:
+    - **Overview** (`/`): brushable event timeline, one-query KPI strip, "The Cabinet" namespace×time heatmap, and top-moving reasons vs the previous period — every aggregate is clickable and drills into Explore.
+    - **Explore** (`/p/discover`): structured filter chips (with a raw-SQL escape hatch) over a virtualized, infinitely-scrolling event table with keyset pagination, plus a config-driven detail panel.
+    - **Agent** (`/agent`): AI investigation via OpenAI tool calling — each SQL query is filed as a numbered exhibit, findings stream in as markdown.
+    - **Scan receipt**: every query's cost (duration, files, bytes scanned) is stamped in the footer.
+    - **Time Range Management**: flexible relative/absolute ranges synchronized to the URL, with manual refresh.
 
 ### Data Flow Diagram
 
@@ -73,7 +74,7 @@ graph LR
         K --"read_parquet"--> F
     end
 
-    L["Users"] --> M["React Web UI<br/>(Analytics & Discover)"]
+    L["Users"] --> M["React Web UI<br/>(Overview & Explore)"]
     M --> H
 ```
 
@@ -95,12 +96,16 @@ graph LR
 │   ├── lifecycle/           # Compaction scheduling and retention
 │   └── query/               # $events planning and query execution
 ├── src/                     # React frontend source code
-│   ├── components/          # Reusable UI components (charts, tables, forms)
+│   ├── styles/              # Design tokens (CSS custom properties) + global styles
+│   ├── ui/                  # Custom component primitives (CSS Modules)
+│   ├── lib/                 # API client, filter model/compiler, SQL builders, agent
+│   ├── components/          # Feature components (charts, explore, overview, agent)
 │   ├── contexts/            # React contexts (theme, refresh)
-│   ├── hooks/               # Custom hooks (data fetching, URL params)
-│   ├── pages/               # Main application pages (Insight, Discover)
+│   ├── hooks/               # Custom hooks (data fetching, filters, URL params)
+│   ├── stores/              # Zustand store (query scan-cost telemetry)
+│   ├── pages/               # Main application pages (Overview, Explore, Agent)
 │   ├── types/               # TypeScript type definitions
-│   └── utils/               # Utility functions (time, date handling)
+│   └── utils/               # Utility functions (time, formatting)
 ├── public/                  # Static assets
 ├── dist/                    # Built frontend (embedded in Go binary)
 ├── Dockerfile               # Multi-stage Docker build
@@ -183,8 +188,10 @@ docker run -d \
 
 Once running, open your browser to `http://localhost:8080` to access:
 
-- **Analytics Dashboard** (`/`): Real-time insights and visualizations
-- **Discover Page** (`/p/discover`): SQL query builder and event exploration
+- **Overview** (`/`): aggregate insights — timeline, KPIs, namespace heatmap, top movers
+- **Namespaces** (`/p/namespaces`): per-namespace event/warning counts with trend sparklines
+- **Explore** (`/p/discover`): filter-driven event exploration with infinite scroll
+- **Agent** (`/agent`): AI-powered event investigation
 
 ## Key Features
 
@@ -194,21 +201,20 @@ Once running, open your browser to `http://localhost:8080` to access:
 - Crash-safe ingestion: every WAL flush is a complete zstd frame, and recovery truncates a torn tail instead of losing the segment. Duplicates caused by informer relists are removed at compaction time.
 - Features graceful shutdown to ensure all in-flight events are flushed and the active segment is sealed before the application terminates.
 
-### **Rich Analytics Dashboard**
+### **Aggregate-First Analytics**
 
-- **Event Timeline Charts**: Interactive visualizations of event patterns over time
-- **Top Noisy Namespaces**: Identify the most active namespaces in your cluster
-- **Warning Analysis**: Breakdown of warning reasons and their frequencies
-- **Recent Critical Events**: Quick access to the latest critical incidents
-- **Metrics Overview**: Key statistics and health indicators
+- **Brushable Timeline**: stacked Normal/Warning histogram — drag or click to zoom the global time range
+- **The Cabinet**: namespace × time heatmap (intensity = volume, hue = warning ratio) — click a cell to open that drawer in Explore
+- **Top Movers**: reason counts vs the previous period, with new/rising/falling badges
+- **One-Query KPI Strip**: all headline numbers from a single scan, each clickable into a pre-filtered Explore view
 
-### **Advanced Query Interface**
+### **Scalable Event Exploration**
 
-- **SQL Query Builder**: Write custom SQL queries with full DuckDB syntax support
-- **Time Range Controls**: Flexible date/time pickers with preset quick ranges
-- **Interactive Results**: Click on events to view detailed information in a drawer
-- **URL Synchronization**: Share queries and results via URL parameters
-- **Real-time Filtering**: Dynamic event filtering and searching
+- **Filter Chips + Raw SQL**: structured, escaped filters compiled to WHERE clauses, with a full DuckDB SQL escape hatch
+- **Virtualized Infinite Scroll**: keyset pagination (timestamp + uid cursor) streams through millions of events without LIMIT walls
+- **Config-Driven Detail Panel**: every field value is click-to-filter
+- **URL Synchronization**: time range, filters, sort, and selection are all shareable via URL
+- **Scan Receipt**: each query's duration, files, and bytes scanned shown in the footer
 
 ### **Intelligent Storage Management**
 
@@ -220,7 +226,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 
 ### **Developer-Friendly**
 
-- **Modern Tech Stack**: React, TypeScript, Material-UI, SWR for data fetching
+- **Modern Tech Stack**: React 19, TypeScript, CSS-Modules design system, ECharts, SWR
 - **Comprehensive Guides**: Detailed development documentation for both frontend and backend
 - **Docker Support**: Multi-stage builds for easy deployment
 - **API-First Design**: RESTful API with JSON responses for integration
@@ -270,7 +276,7 @@ curl -L "http://localhost:8080/download?from=2025-01-01T00:00:00Z&to=2025-01-02T
 ```
 
 The response sets `Content-Type: application/jsonl` and `Content-Encoding: gzip`, and events are ordered by `lastTimestamp`.
-The Discover page includes a **Download** button that calls this endpoint with the current filters.
+The Explore page includes a **Download** button that calls this endpoint with the current filters.
 
 ### Example: Top Event Reasons
 
@@ -307,8 +313,8 @@ curl -X POST http://localhost:8080/query \
 
 - `GET /stats` - System statistics and metrics
 - `GET /metrics` - Prometheus metrics (for scraping)
-- `GET /` - Web interface (Analytics Dashboard)
-- `GET /p/discover` - Query builder interface
+- `GET /` - Web interface (Overview)
+- `GET /p/discover` - Explore (filter-driven event exploration)
 
 For detailed query examples and advanced usage, see `DEVELOPMENT_QUERY_GUIDE.md`.
 
@@ -348,9 +354,10 @@ This project welcomes contributions! Here are some helpful resources:
 **Frontend (React/TypeScript):**
 
 - Vite for fast development and building
-- Material-UI for consistent, modern UI components
-- SWR for efficient data fetching and caching
-- ApexCharts for interactive visualizations
+- Custom design-token component system (CSS Modules, light/dark themes)
+- SWR for data fetching and caching, swr/infinite for keyset pagination
+- Apache ECharts (canvas, tree-shaken) for visualizations
+- react-virtuoso for table virtualization
 - Wouter for lightweight client-side routing
 
 ## Event Schema Reference
