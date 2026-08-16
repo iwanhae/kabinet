@@ -13,21 +13,26 @@ import (
 	"net/http/pprof"
 	"time"
 
-	"github.com/iwanhae/kabinet/internal/storage"
+	"github.com/iwanhae/kabinet/internal/query"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 )
 
+// StatsFunc assembles the /stats payload; wired up in cmd/server.
+type StatsFunc func(ctx context.Context) map[string]any
+
 // Server holds the dependencies for the API server.
 type Server struct {
-	storage *storage.Storage
-	server  *http.Server
+	query  *query.Executor
+	stats  StatsFunc
+	server *http.Server
 }
 
 // New creates a new API server.
-func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
+func New(executor *query.Executor, stats StatsFunc, port string, distFS embed.FS) *Server {
 	s := &Server{
-		storage: storage,
+		query: executor,
+		stats: stats,
 	}
 
 	mux := http.NewServeMux()
@@ -99,7 +104,7 @@ func New(storage *storage.Storage, port string, distFS embed.FS) *Server {
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(s.storage.Stats(r.Context()))
+	json.NewEncoder(w).Encode(s.stats(r.Context()))
 }
 
 func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +145,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	eg.Go(func() error {
 		defer pw.Close()
 		enc := json.NewEncoder(pw)
-		_, err := s.storage.StreamEvents(ctx, where, start, end, func(row map[string]any) error {
+		_, err := s.query.StreamEvents(ctx, where, start, end, func(row map[string]any) error {
 			return enc.Encode(row)
 		})
 		return err
@@ -176,10 +181,10 @@ type queryRequest struct {
 }
 
 type queryResponse struct {
-	Results        []map[string]any          `json:"results"`
-	DurationMs     int64                     `json:"duration_ms"`
-	Files          []storage.ParquetFileInfo `json:"files"`
-	TotalFilesSize int64                     `json:"total_files_size_bytes"`
+	Results        []map[string]any   `json:"results"`
+	DurationMs     int64              `json:"duration_ms"`
+	Files          []query.SourceFile `json:"files"`
+	TotalFilesSize int64              `json:"total_files_size_bytes"`
 }
 
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +204,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, result, err := s.storage.RangeQuery(r.Context(), req.Query, req.Start, req.End)
+	rows, result, err := s.query.RangeQuery(r.Context(), req.Query, req.Start, req.End)
 	if err != nil {
 		log.Printf("server: failed to execute query: %v", err)
 		http.Error(w, fmt.Sprintf("server: failed to execute query: %v", err), http.StatusInternalServerError)

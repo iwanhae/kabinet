@@ -7,14 +7,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 
 	"github.com/iwanhae/kabinet/internal/api"
+	"github.com/iwanhae/kabinet/internal/catalog"
 	"github.com/iwanhae/kabinet/internal/collector"
 	"github.com/iwanhae/kabinet/internal/config"
+	"github.com/iwanhae/kabinet/internal/lifecycle"
 	"github.com/iwanhae/kabinet/internal/metrics"
-	"github.com/iwanhae/kabinet/internal/storage"
+	"github.com/iwanhae/kabinet/internal/query"
+	"github.com/iwanhae/kabinet/internal/wal"
 )
 
 //go:embed all:dist
@@ -38,22 +42,67 @@ func main() {
 		cancel()
 	}()
 
-	// --- Storage ---
-	storage, err := storage.New(ctx, "data/events.db")
-	if err != nil {
-		log.Fatalf("main: failed to initialize storage: %v", err)
+	// --- Data layout ---
+	walDir := filepath.Join(cfg.DataDir, "wal")
+	archiveDir := filepath.Join(cfg.DataDir, "archive")
+	tmpDir := filepath.Join(cfg.DataDir, "tmp")
+
+	// tmp holds only spill files, snapshots, and unpublished compactor
+	// outputs; anything left over is garbage from a previous run.
+	if err := os.RemoveAll(tmpDir); err != nil {
+		log.Printf("main: failed to clear tmp directory: %v", err)
 	}
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		log.Fatalf("main: failed to create tmp directory: %v", err)
+	}
+
+	// --- Ingest (WAL) ---
+	walWriter, err := wal.NewWriter(ctx, wal.Options{
+		Dir:            walDir,
+		TempDir:        tmpDir,
+		RotateInterval: cfg.WalRotateInterval,
+		RotateBytes:    cfg.WalRotateBytes,
+	})
+	if err != nil {
+		log.Fatalf("main: failed to initialize wal: %v", err)
+	}
+
+	// --- Catalog ---
+	cat, err := catalog.Open(archiveDir)
+	if err != nil {
+		log.Fatalf("main: failed to open catalog: %v", err)
+	}
+
+	// --- Query ---
+	executor, err := query.New(cat, walWriter, walDir)
+	if err != nil {
+		log.Fatalf("main: failed to initialize query executor: %v", err)
+	}
+
+	// --- Manage (lifecycle) ---
+	manager := lifecycle.New(cat, lifecycle.Config{
+		WalDir:            walDir,
+		TempDir:           tmpDir,
+		StorageLimitBytes: cfg.StorageLimitBytes,
+		CompactInterval:   cfg.CompactInterval,
+		MergeTargetBytes:  cfg.MergeTargetBytes,
+		MemoryLimitMB:     cfg.CompactMemoryLimitMB,
+	})
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		<-ctx.Done()
-		log.Println("main: shutting down storage...")
-		storage.Wait()
-		log.Println("main: storage closed")
+		manager.Run(ctx)
 	}()
 
 	// --- API Server ---
-	apiServer := api.New(storage, cfg.ListenPort, distFS)
+	stats := func(ctx context.Context) map[string]any {
+		return map[string]any{
+			"data_dir": cfg.DataDir,
+			"wal":      walWriter.Stats(),
+			"archive":  cat.Stats(),
+		}
+	}
+	apiServer := api.New(executor, stats, cfg.ListenPort, distFS)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -64,20 +113,12 @@ func main() {
 		log.Println("main: API server closed")
 	}()
 
-	// --- Collector and Data Lifecycle ---
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		log.Println("main: starting data lifecycle manager...")
-		storage.LifecycleManager(ctx, cfg.StorageLimitBytes)
-		log.Println("main: data lifecycle manager finished")
-	}()
-
+	// --- Collector ---
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		log.Println("main: starting event collector...")
-		runCollector(ctx, storage)
+		runCollector(ctx, walWriter)
 		log.Println("main: collector finished")
 	}()
 
@@ -91,10 +132,14 @@ func main() {
 
 	log.Println("main: waiting for all background processes to finish...")
 	wg.Wait()
+
+	// Flush and seal the active WAL segment, then release DuckDB.
+	walWriter.Wait()
+	executor.Close()
 	log.Println("main: all processes finished. exiting.")
 }
 
-func runCollector(ctx context.Context, storage *storage.Storage) {
+func runCollector(ctx context.Context, walWriter *wal.Writer) {
 	c, err := collector.ConnectK8s()
 	if err != nil {
 		log.Printf("collector: error connecting to Kubernetes: %v. collector will not run.", err)
@@ -115,18 +160,10 @@ func runCollector(ctx context.Context, storage *storage.Storage) {
 			// track collected event
 			metrics.EventsCollected.Inc()
 
-			// if the event is missing some fields, set them to the creation timestamp
-			if event.FirstTimestamp.IsZero() {
-				event.FirstTimestamp = event.ObjectMeta.CreationTimestamp
-			}
-			if event.LastTimestamp.IsZero() {
-				event.LastTimestamp = event.FirstTimestamp
-			}
-			if event.Count == 0 {
-				event.Count = 1
-			}
-
-			if err := storage.AppendEvent(ctx, &event); err != nil {
+			// Events are stored as raw JSON; field fallbacks (empty
+			// firstTimestamp/count) are applied at read time by the schema
+			// projection.
+			if err := walWriter.Append(ctx, &event); err != nil {
 				log.Printf("collector: failed to append event: %v", err)
 			}
 		case <-ctx.Done():

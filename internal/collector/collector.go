@@ -41,16 +41,21 @@ func WatchEvents(ctx context.Context, c *kubernetes.Clientset) <-chan v1.Event {
 
 	informer := cache.NewSharedInformer(source, &v1.Event{}, 0)
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			if event, ok := obj.(*v1.Event); ok {
-				select {
-				case eventCh <- *event:
-				case <-ctx.Done():
-					return
-				}
+	send := func(obj any) {
+		if event, ok := obj.(*v1.Event); ok {
+			select {
+			case eventCh <- *event:
+			case <-ctx.Done():
 			}
-		},
+		}
+	}
+
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: send,
+		// Events are updated in place when they recur (count/lastTimestamp
+		// bump with a new resourceVersion); without this, recurrences
+		// between relists were lost.
+		UpdateFunc: func(_, newObj any) { send(newObj) },
 	})
 
 	go informer.Run(ctx.Done())

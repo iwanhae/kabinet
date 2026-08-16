@@ -1,11 +1,11 @@
-package storage
+package query
 
 import (
 	"database/sql"
 	"fmt"
 )
 
-// serializeRows converts database rows to a slice of maps
+// serializeRows converts database rows to a slice of maps.
 func serializeRows(rows *sql.Rows) ([]map[string]any, error) {
 	columns, err := rows.Columns()
 	if err != nil {

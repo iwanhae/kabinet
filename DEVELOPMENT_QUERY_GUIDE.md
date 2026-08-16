@@ -33,7 +33,7 @@ The API returns a JSON object with detailed information about the query executio
 
 - `results`: An array of JSON objects, where each object represents a row in the query result. The keys correspond to the column names in your `SELECT` statement.
 - `duration_ms`: Query execution time in milliseconds
-- `files`: Array of parquet file information that were accessed during the query
+- `files`: Array of data sources accessed during the query — Parquet archive files and/or recent WAL segments (`.jsonl.zst`)
 - `total_files_size_bytes`: Total size of all accessed files in bytes
 
 **Example Response:**
@@ -55,12 +55,15 @@ For a query like `SELECT reason, COUNT(*) as count FROM $events ...`, the respon
   "duration_ms": 45,
   "files": [
     {
-      "name": "events_2025-01-01_12-00-00.parquet",
-      "size": 2097152,
-      "created": "2025-01-01T12:00:00Z"
+      "path": "data/archive/l2/events_1735689600000_1735732800000_12.parquet",
+      "size": 2097152
+    },
+    {
+      "path": "data/wal/events_1735732800000_1735732860000.jsonl.zst",
+      "size": 14292
     }
   ],
-  "total_files_size_bytes": 2097152
+  "total_files_size_bytes": 2111444
 }
 ```
 
@@ -77,7 +80,9 @@ server: failed to execute query: Binder Error: Referenced column "kube-system" n
 
 ## The `$events` Macro
 
-In your SQL queries, you don't query a traditional table name. Instead, you use the `$events` macro. This macro dynamically represents all the Kubernetes events within the specified `start` and `end` time range, combining both real-time in-memory data and historical data from Parquet files.
+In your SQL queries, you don't query a traditional table name. Instead, you use the `$events` macro. This macro dynamically represents all the Kubernetes events within the specified `start` and `end` time range, combining recent data from raw WAL segments and historical data from Parquet files. Only files whose time range overlaps `start`/`end` are scanned, so always specify the narrowest possible range.
+
+Note: deduplication happens at compaction time, not query time — events re-listed by the collector after a restart may appear duplicated for a few minutes until their WAL segments are compacted.
 
 **Example:**
 
@@ -214,11 +219,17 @@ curl http://localhost:8080/stats
 
 ```json
 {
-  "in_memory_events": 15234,
-  "parquet_files": 45,
-  "total_storage_size_bytes": 8589934592,
-  "oldest_event": "2025-01-01T00:00:00Z",
-  "newest_event": "2025-01-07T23:59:59Z"
+  "data_dir": "data",
+  "wal": {
+    "queue_len": 0,
+    "active_segment": "data/wal/events_1735732920000.jsonl.zst.open",
+    "active_stable_size": 5321
+  },
+  "archive": {
+    "files_l1": 3,
+    "files_l2": 42,
+    "total_size_bytes": 8589934592
+  }
 }
 ```
 

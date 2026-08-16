@@ -15,12 +15,12 @@ COPY --from=build-web /app/dist /go/src/kabinet/cmd/server/dist
 
 ENV CGO_ENABLED=1
 RUN go build -v -o /go/bin/server ./cmd/server/main.go
-RUN go build -v -o /go/bin/merger ./cmd/merger/main.go
+RUN go build -v -o /go/bin/compactor ./cmd/compactor/main.go
 
 FROM debian:12-slim
 WORKDIR /
 COPY --from=build /go/bin/server /usr/local/bin/server
-COPY --from=build /go/bin/merger /usr/local/bin/merger
+COPY --from=build /go/bin/compactor /usr/local/bin/compactor
 
 EXPOSE 8080
 VOLUME [ "/data" ]

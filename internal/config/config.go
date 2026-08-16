@@ -4,26 +4,41 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 )
 
 // Config holds all configuration for the application, loaded from environment variables.
 type Config struct {
+	DataDir           string
 	StorageLimitBytes int64
 	ListenPort        string
+
+	// Ingest (WAL)
+	WalRotateInterval time.Duration
+	WalRotateBytes    int64
+
+	// Manage (compaction)
+	CompactInterval      time.Duration
+	CompactMemoryLimitMB int
+	MergeTargetBytes     int64
 }
 
 // Load reads configuration from environment variables and returns a new Config struct.
 // It falls back to default values if environment variables are not set or invalid.
 func Load() *Config {
-	storageLimitGB := getEnvAsInt64("STORAGE_LIMIT_GB", 10)
-	listenPort := getEnv("LISTEN_PORT", "8080")
-
 	cfg := &Config{
-		StorageLimitBytes: storageLimitGB * 1024 * 1024 * 1024,
-		ListenPort:        listenPort,
+		DataDir:              getEnv("DATA_DIR", "data"),
+		StorageLimitBytes:    getEnvAsInt64("STORAGE_LIMIT_GB", 10) * 1024 * 1024 * 1024,
+		ListenPort:           getEnv("LISTEN_PORT", "8080"),
+		WalRotateInterval:    time.Duration(getEnvAsInt64("WAL_ROTATE_SECONDS", 60)) * time.Second,
+		WalRotateBytes:       getEnvAsInt64("WAL_ROTATE_MB", 8) * 1024 * 1024,
+		CompactInterval:      time.Duration(getEnvAsInt64("COMPACT_INTERVAL_SECONDS", 600)) * time.Second,
+		CompactMemoryLimitMB: int(getEnvAsInt64("COMPACT_MEMORY_LIMIT_MB", 512)),
+		MergeTargetBytes:     getEnvAsInt64("MERGE_TARGET_MB", 128) * 1024 * 1024,
 	}
 
-	log.Printf("config: loaded configuration: StorageLimitGB=%d, ListenPort=%s", storageLimitGB, cfg.ListenPort)
+	log.Printf("config: loaded configuration: DataDir=%s StorageLimitBytes=%d ListenPort=%s WalRotateInterval=%s CompactInterval=%s",
+		cfg.DataDir, cfg.StorageLimitBytes, cfg.ListenPort, cfg.WalRotateInterval, cfg.CompactInterval)
 	return cfg
 }
 
