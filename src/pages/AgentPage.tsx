@@ -1,108 +1,73 @@
-import { useState } from "react";
+import React, { useState } from "react";
+import { FilePlus2, History, Settings } from "lucide-react";
 import { useSettings } from "../hooks/agent/useSettings";
 import { useInvestigation } from "../hooks/agent/useInvestigation";
 import { useHistory } from "../hooks/agent/useHistory";
-import { SettingsModal } from "../components/Agent/SettingsModal";
-import { ChatInterface } from "../components/Agent/ChatInterface";
-import { HistoryDrawer } from "../components/Agent/HistoryDrawer";
-import { Box, IconButton, Tooltip, Card } from "@mui/material";
-import SettingsIcon from "@mui/icons-material/Settings";
-import AddIcon from "@mui/icons-material/Add";
-import HistoryIcon from "@mui/icons-material/History";
+import { useTimeRange } from "../hooks/useUrlParams";
+import { CaseTranscript } from "../components/agent/CaseTranscript";
+import { Composer } from "../components/agent/Composer";
+import { HistoryPanel } from "../components/agent/HistoryPanel";
+import { SettingsModal } from "../components/agent/SettingsModal";
+import { IconButton } from "../ui";
+import styles from "./AgentPage.module.css";
 
-const AgentPage = () => {
+const AgentPage: React.FC = () => {
   const { config, saveConfig, isOpen, openSettings, closeSettings } =
     useSettings();
-  const {
-    messages,
-    status,
-    currentThought,
-    currentHypothesis,
-    currentQuery,
-    start,
-    stop,
-    clearSession,
-    loadSession,
-  } = useInvestigation(config);
-
+  const { turns, status, start, stop, clearSession, loadSession } =
+    useInvestigation(config);
   const { sessions, deleteSession } = useHistory();
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const { from, to } = useTimeRange();
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const busy =
+    status === "thinking" || status === "querying" || status === "streaming";
+
+  const investigate = (problem: string) => {
+    void start(problem, { from, to });
+  };
 
   return (
-    <Box
-      sx={{
-        width: "100%",
-        height: "calc(100vh - 100px)",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      {/* Chat Container */}
-      <Card
-        sx={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          mb: 2,
-          position: "relative",
-        }}
-      >
-        <Box
-          sx={{
-            position: "absolute",
-            top: 12,
-            right: 12,
-            zIndex: 10,
-            bgcolor: "background.paper",
-            borderRadius: 2,
-            boxShadow: 1,
-          }}
-        >
-          <Tooltip title="History">
-            <IconButton onClick={() => setIsHistoryOpen(true)} size="small">
-              <HistoryIcon />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="New Chat">
-            <IconButton onClick={clearSession} size="small">
-              <AddIcon />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Settings">
-            <IconButton onClick={openSettings} size="small">
-              <SettingsIcon />
-            </IconButton>
-          </Tooltip>
-        </Box>
-        <ChatInterface
-          messages={messages}
-          status={status}
-          currentThought={currentThought}
-          currentHypothesis={currentHypothesis}
-          currentQuery={currentQuery}
-          onStartInvestigation={start}
-          onStop={stop}
-        />
-      </Card>
+    <div className={styles.page}>
+      <header className={styles.header}>
+        <span className={styles.title}>Case file</span>
+        <div className={styles.spacer} />
+        <IconButton label="Case history" onClick={() => setHistoryOpen(true)}>
+          <History size={16} />
+        </IconButton>
+        <IconButton label="New case" onClick={clearSession}>
+          <FilePlus2 size={16} />
+        </IconButton>
+        <IconButton label="Agent settings" onClick={openSettings}>
+          <Settings size={16} />
+        </IconButton>
+      </header>
 
-      {/* Settings Modal */}
+      <div className={styles.transcriptWrap}>
+        <CaseTranscript turns={turns} status={status} onExample={investigate} />
+      </div>
+
+      <Composer
+        busy={busy}
+        disabled={!config.openaiApiKey}
+        onSubmit={investigate}
+        onStop={stop}
+      />
+
       <SettingsModal
-        isOpen={isOpen}
+        open={isOpen}
         onClose={closeSettings}
         config={config}
         onSave={saveConfig}
       />
-
-      {/* History Drawer */}
-      <HistoryDrawer
-        isOpen={isHistoryOpen}
-        onClose={() => setIsHistoryOpen(false)}
+      <HistoryPanel
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
         sessions={sessions}
-        onSelectSession={loadSession}
-        onDeleteSession={deleteSession}
+        onSelect={loadSession}
+        onDelete={deleteSession}
       />
-    </Box>
+    </div>
   );
 };
 

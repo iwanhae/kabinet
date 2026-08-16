@@ -1,0 +1,87 @@
+.trigger {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.panel {
+  display: flex;
+  width: 520px;
+  max-width: calc(100vw - 16px);
+}
+
+.quickList {
+  width: 180px;
+  border-right: 1px solid var(--line);
+  padding: var(--sp-2) 0;
+  flex-shrink: 0;
+}
+
+.quickItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: var(--sp-2) var(--sp-4);
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.quickItem:hover {
+  background: var(--card-inset);
+}
+
+.quickItemActive {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.custom {
+  flex: 1;
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.pickerRow {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+}
+
+.pickerRow > :first-child {
+  flex: 1;
+}
+
+.nativePicker {
+  height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 0 var(--sp-1);
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+
+.invalid {
+  color: var(--alert);
+  font-size: 12px;
+}

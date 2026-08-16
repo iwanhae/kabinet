@@ -1,19 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import type { Message } from "../../types/agent";
+import type { CaseSession } from "../../types/agent";
 
-export interface SavedSession {
-  id: string;
-  timestamp: number;
-  title: string;
-  messages: Message[];
-}
-
-const STORAGE_KEY = "kabinet_agent_sessions";
+const STORAGE_KEY = "kabinet_agent_cases";
 
 export const useHistory = () => {
-  const [sessions, setSessions] = useState<SavedSession[]>([]);
+  const [sessions, setSessions] = useState<CaseSession[]>([]);
 
-  // Load sessions on mount
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
@@ -25,7 +17,7 @@ export const useHistory = () => {
     }
   }, []);
 
-  const saveSession = useCallback((session: SavedSession) => {
+  const saveSession = useCallback((session: CaseSession) => {
     setSessions((prev) => {
       const existingIndex = prev.findIndex((s) => s.id === session.id);
       let next;
@@ -35,9 +27,7 @@ export const useHistory = () => {
       } else {
         next = [session, ...prev];
       }
-      // Sort by timestamp desc
       next.sort((a, b) => b.timestamp - a.timestamp);
-
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
       return next;
     });
@@ -51,15 +41,9 @@ export const useHistory = () => {
     });
   }, []);
 
-  const clearAll = useCallback(() => {
-    setSessions([]);
-    localStorage.removeItem(STORAGE_KEY);
-  }, []);
-
   return {
     sessions,
     saveSession,
     deleteSession,
-    clearAll,
   };
 };

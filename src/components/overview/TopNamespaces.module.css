@@ -1,0 +1,78 @@
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row:hover .ns {
+  color: var(--accent-strong);
+}
+
+.ns {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--ink-muted);
+  flex-shrink: 0;
+}
+
+.warnPct {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  width: 52px;
+  text-align: right;
+  flex-shrink: 0;
+  color: var(--ink-faint);
+}
+
+.warnPctHot {
+  color: var(--signal-strong);
+}
+
+.empty {
+  color: var(--ink-faint);
+  font-size: 13px;
+  padding: var(--sp-4) 0;
+  text-align: center;
+}
+
+.viewAll {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.viewAll:hover {
+  color: var(--accent-strong);
+}

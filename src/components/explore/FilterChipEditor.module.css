@@ -1,0 +1,56 @@
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  width: 320px;
+  max-width: calc(100vw - 16px);
+}
+
+.row {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.row > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.suggestions {
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.suggestion {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: var(--sp-1) var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggestion:hover {
+  background: var(--card-inset);
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}

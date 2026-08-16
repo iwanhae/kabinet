@@ -1,0 +1,85 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.th {
+  background: var(--card-inset);
+  border-bottom: 1px solid var(--line-strong);
+  padding: var(--sp-2) var(--sp-3);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.thSortable {
+  cursor: pointer;
+}
+
+.thSortable:hover {
+  color: var(--ink);
+}
+
+.sortMark {
+  color: var(--accent);
+  margin-left: 2px;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row:hover td {
+  background: var(--card-inset);
+}
+
+.rowWarning td:first-child {
+  box-shadow: inset 2px 0 0 var(--signal);
+}
+
+.rowSelected td {
+  background: var(--accent-soft);
+}
+
+.td {
+  border-bottom: 1px solid var(--line);
+  padding: var(--sp-2) var(--sp-3);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.right {
+  text-align: right;
+}
+
+.footer {
+  padding: var(--sp-3);
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 160px;
+  color: var(--ink-faint);
+  font-size: 13px;
+}

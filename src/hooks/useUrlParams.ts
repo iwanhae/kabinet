@@ -6,35 +6,52 @@ import { useRefresh } from "../contexts/RefreshContext";
 export interface UrlParams {
   from?: string;
   to?: string;
+  /** JSON-encoded filter chips (chips mode). */
+  filters?: string;
+  /** Raw WHERE clause (raw mode / legacy links). */
   where?: string;
+  /** Sort spec, e.g. "ts:desc". */
+  sort?: string;
+  /** Selected event uid (detail panel). */
+  uid?: string;
   query?: string;
+  /** Legacy detail-link param, still honored. */
   resourceVersion?: string;
 }
 
+const PARAM_KEYS: (keyof UrlParams)[] = [
+  "from",
+  "to",
+  "filters",
+  "where",
+  "sort",
+  "uid",
+  "query",
+  "resourceVersion",
+];
+
 /**
- * A hook for centralized management of URL parameters
- * Adds or updates new parameters while retaining existing ones
+ * Centralized URL-parameter management. The URL is the source of truth for
+ * everything shareable: time range, filters, sort, selection.
  */
 export const useUrlParams = () => {
   const [, setLocation] = useLocation();
 
   const getCurrentParams = (): UrlParams => {
     const searchParams = new URLSearchParams(window.location.search);
-    return {
-      from: searchParams.get("from") || undefined,
-      to: searchParams.get("to") || undefined,
-      where: searchParams.get("where") || undefined,
-      query: searchParams.get("query") || undefined,
-      resourceVersion: searchParams.get("resourceVersion") || undefined,
-    };
+    const params: UrlParams = {};
+    PARAM_KEYS.forEach((key) => {
+      const value = searchParams.get(key);
+      if (value) params[key] = value;
+    });
+    return params;
   };
 
   const updateParams = (
     newParams: Partial<UrlParams>,
-    path = "/p/discover",
+    path: string = window.location.pathname,
   ) => {
-    const currentParams = getCurrentParams();
-    const mergedParams = { ...currentParams, ...newParams };
+    const mergedParams = { ...getCurrentParams(), ...newParams };
 
     const searchParams = new URLSearchParams();
     Object.entries(mergedParams).forEach(([key, value]) => {
@@ -44,61 +61,21 @@ export const useUrlParams = () => {
     });
 
     const queryString = searchParams.toString();
-    const newUrl = queryString ? `${path}?${queryString}` : path;
-    setLocation(newUrl);
-  };
-
-  const clearParams = (keysToKeep?: string[]) => {
-    if (!keysToKeep) {
-      setLocation("/p/discover");
-      return;
-    }
-
-    const currentParams = getCurrentParams();
-    const filteredParams: UrlParams = {};
-
-    keysToKeep.forEach((key) => {
-      if (key in currentParams) {
-        filteredParams[key as keyof UrlParams] =
-          currentParams[key as keyof UrlParams];
-      }
-    });
-
-    updateParams(filteredParams);
+    setLocation(queryString ? `${path}?${queryString}` : path);
   };
 
   return {
     getCurrentParams,
     updateParams,
-    clearParams,
   };
-};
-
-// 편의성을 위한 개별 훅들
-export const useTimeRangeParams = () => {
-  const { updateParams, getCurrentParams } = useUrlParams();
-
-  const setTimeRange = (from: string, to: string) => {
-    updateParams({ from, to }, window.location.pathname);
-  };
-
-  const getTimeRange = () => {
-    const params = getCurrentParams();
-    return { from: params.from, to: params.to };
-  };
-
-  return { setTimeRange, getTimeRange };
 };
 
 export const useQueryParams = () => {
   const { updateParams, getCurrentParams } = useUrlParams();
 
   const setWhereClause = (where: string) => {
-    updateParams({ where });
-  };
-
-  const setQuery = (query: string) => {
-    updateParams({ query });
+    // Drill-downs from other pages land on Explore.
+    updateParams({ where, filters: undefined }, "/p/discover");
   };
 
   const getQuery = () => {
@@ -106,15 +83,15 @@ export const useQueryParams = () => {
     return { where: params.where, query: params.query };
   };
 
-  return { setWhereClause, setQuery, getQuery };
+  return { setWhereClause, getQuery };
 };
 
 export const useTimeRange = () => {
   const { updateParams } = useUrlParams();
-  const search = useSearch(); // URL 쿼리 변경 감지
-  const { refreshKey, triggerRefresh } = useRefresh(); // 전역 새로고침 상태
+  const search = useSearch();
+  const { refreshKey, triggerRefresh } = useRefresh();
 
-  // search 문자열이나 refreshKey가 바뀔 때마다 시간 범위를 새로 계산
+  // Recomputed whenever the URL or the manual refresh counter changes.
   const { from, to, rawFrom, rawTo } = useMemo(() => {
     const searchParams = new URLSearchParams(search);
     const fromParam = searchParams.get("from") || "now-30m";
@@ -125,7 +102,7 @@ export const useTimeRange = () => {
   }, [search, refreshKey]);
 
   const setTimeRange = (from: string, to: string) => {
-    updateParams({ from, to }, window.location.pathname);
+    updateParams({ from, to });
   };
 
   return {
@@ -134,6 +111,6 @@ export const useTimeRange = () => {
     rawFrom,
     rawTo,
     setTimeRange,
-    refreshTimeRange: triggerRefresh, // Context의 함수를 그대로 반환
+    refreshTimeRange: triggerRefresh,
   };
 };

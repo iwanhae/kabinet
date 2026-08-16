@@ -1,0 +1,103 @@
+/*
+ * Kabinet design tokens.
+ *
+ * Interactive chrome (buttons, focus, active nav, selection) uses the blue
+ * --accent family. Data keeps its own semantic pair: --steel (blue) for
+ * Normal events, --signal (red) for Warning events. Components must
+ * reference tokens, never raw hex. Canvas charts mirror this palette in
+ * src/components/charts/chartTheme.ts — keep the two in sync.
+ */
+
+:root {
+  /* surfaces */
+  --paper: #f5f7f8;
+  --card: #ffffff;
+  --card-inset: #eef1f3;
+
+  /* ink */
+  --ink: #0f1419;
+  --ink-muted: #536471;
+  --ink-faint: #8b98a5;
+  --ink-inverse: #ffffff;
+
+  /* hairlines */
+  --line: #e3e8eb;
+  --line-strong: #cfd9de;
+
+  /* interactive accent (blue) */
+  --accent: #1d9bf0;
+  --accent-strong: #1a8cd8;
+  --accent-soft: #e3f1fd;
+
+  /* data: Normal (steel blue) vs Warning (signal red) */
+  --steel: #2e93fa;
+  --steel-strong: #1d6fc4;
+  --steel-soft: #e1eefc;
+  --signal: #f44336;
+  --signal-strong: #d32f2f;
+  --signal-soft: #fde3e1;
+
+  /* UI errors — same red family as warnings */
+  --alert: #d32f2f;
+  --alert-soft: #fde3e1;
+
+  /* type */
+  --font-ui: "Inter Variable", "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  /* shape */
+  --radius: 12px;
+  --radius-control: 8px;
+  --radius-chip: 999px;
+  --shadow-card: 0 1px 2px rgb(15 20 25 / 4%);
+
+  /* spacing (4px grid) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* z layers */
+  --z-topbar: 100;
+  --z-popover: 200;
+  --z-drawer: 300;
+  --z-modal: 400;
+  --z-tooltip: 500;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --paper: #0e1419;
+  --card: #171d23;
+  --card-inset: #1f2831;
+
+  --ink: #e7e9ea;
+  --ink-muted: #94a3af;
+  --ink-faint: #64707b;
+  --ink-inverse: #0e1419;
+
+  --line: #29343d;
+  --line-strong: #3b4854;
+
+  --accent: #4dabf5;
+  --accent-strong: #74bff8;
+  --accent-soft: #143047;
+
+  --steel: #5ba7f7;
+  --steel-strong: #8bc2fa;
+  --steel-soft: #16293e;
+  --signal: #f0564a;
+  --signal-strong: #f57e74;
+  --signal-soft: #3c1e1b;
+
+  --alert: #f0564a;
+  --alert-soft: #3c1e1b;
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 24%);
+
+  color-scheme: dark;
+}

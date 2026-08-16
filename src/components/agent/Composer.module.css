@@ -1,0 +1,15 @@
+.composer {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+
+.input {
+  flex: 1;
+}

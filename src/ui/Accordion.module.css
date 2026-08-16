@@ -1,0 +1,41 @@
+.accordion {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  list-style: none;
+  user-select: none;
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.summary:hover {
+  color: var(--ink);
+}
+
+.chevron {
+  transition: transform 120ms ease;
+  flex-shrink: 0;
+}
+
+.accordion[open] .chevron {
+  transform: rotate(90deg);
+}
+
+.body {
+  border-top: 1px solid var(--line);
+  padding: var(--sp-3);
+  overflow: auto;
+}

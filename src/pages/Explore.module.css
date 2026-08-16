@@ -1,0 +1,33 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  /* Fill the viewport between the top bar and the scan-cost bar. */
+  height: calc(100vh - 52px - 28px - 2 * var(--sp-5));
+  min-height: 480px;
+}
+
+.timelineCard {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--sp-3) var(--sp-4);
+  flex-shrink: 0;
+}
+
+.resultsMeta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+  padding: 0 var(--sp-1);
+  flex-shrink: 0;
+}
+
+.tableWrap {
+  flex: 1;
+  min-height: 240px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}

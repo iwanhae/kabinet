@@ -1,7 +1,7 @@
 import { useSearch } from "wouter";
 
 export interface NavigationOptions {
-  page: "" | "insight" | "discover";
+  page: "" | "insight" | "discover" | "namespaces" | "agent";
   params?: {
     where?: string;
     from?: string;
@@ -10,6 +10,9 @@ export interface NavigationOptions {
   };
 }
 
+/**
+ * Builds hrefs that carry the current time range (from/to) across pages.
+ */
 export const useNavigation = () => {
   const search = useSearch();
   const searchParams = new URLSearchParams(search);
@@ -18,12 +21,19 @@ export const useNavigation = () => {
 
   return (options: NavigationOptions): string => {
     if (options.page === "insight") options.page = "";
-    const base = options.page ? `/p/${options.page}` : "/";
-    const href = `${base}?${new URLSearchParams({
+    const base =
+      options.page === "agent"
+        ? "/agent"
+        : options.page
+          ? `/p/${options.page}`
+          : "/";
+    const params: Record<string, string> = {
       from: fromParam,
       to: toParam,
-      ...options.params, // params will override the search params
-    }).toString()}`;
-    return href;
+    };
+    Object.entries(options.params ?? {}).forEach(([key, value]) => {
+      if (value !== undefined) params[key] = value;
+    });
+    return `${base}?${new URLSearchParams(params).toString()}`;
   };
 };

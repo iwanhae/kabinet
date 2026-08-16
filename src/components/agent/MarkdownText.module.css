@@ -1,0 +1,75 @@
+.markdown {
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin: var(--sp-4) 0 var(--sp-2);
+}
+
+.markdown p {
+  margin: 0 0 var(--sp-2);
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 var(--sp-2);
+  padding-left: var(--sp-5);
+}
+
+.markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--card-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-chip);
+  padding: 0 3px;
+}
+
+.markdown pre {
+  background: var(--card-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  overflow: auto;
+  margin: 0 0 var(--sp-2);
+}
+
+.markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.markdown table {
+  border-collapse: collapse;
+  margin: 0 0 var(--sp-2);
+}
+
+.markdown th,
+.markdown td {
+  border: 1px solid var(--line);
+  padding: var(--sp-1) var(--sp-2);
+  font-size: 12px;
+}
+
+.markdown th {
+  background: var(--card-inset);
+  font-weight: 600;
+}
+
+.markdown blockquote {
+  margin: 0 0 var(--sp-2);
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink-muted);
+}

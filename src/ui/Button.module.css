@@ -1,0 +1,74 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  border-radius: var(--radius-control);
+  font-family: var(--font-ui);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.md {
+  height: 32px;
+  padding: 0 var(--sp-3);
+  font-size: 13px;
+}
+
+.sm {
+  height: 26px;
+  padding: 0 var(--sp-2);
+  font-size: 12px;
+}
+
+.solid {
+  background: var(--accent);
+  color: #ffffff;
+  border: 1px solid var(--accent);
+}
+
+.solid:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.outline {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+}
+
+.outline:hover:not(:disabled) {
+  border-color: var(--ink-muted);
+  background: var(--card-inset);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--ink-muted);
+  border: 1px solid transparent;
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--card-inset);
+  color: var(--ink);
+}
+
+.iconOnly {
+  padding: 0;
+  width: 32px;
+}
+
+.sm.iconOnly {
+  width: 26px;
+}

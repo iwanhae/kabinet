@@ -5,8 +5,6 @@ import React, {
   useEffect,
   type ReactNode,
 } from "react";
-import { ThemeProvider as MuiThemeProvider } from "@mui/material/styles";
-import { darkTheme, lightTheme } from "../theme";
 
 interface ThemeContextType {
   isDarkMode: boolean;
@@ -28,26 +26,28 @@ interface ThemeProviderProps {
   children: ReactNode;
 }
 
+/**
+ * Light is the default; dark mode is applied by setting data-theme on <html>,
+ * which swaps the CSS custom properties in src/styles/tokens.css.
+ */
 export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
   const [isDarkMode, setIsDarkMode] = useState(() => {
-    // Check localStorage for saved theme preference, default to dark mode
     const savedTheme = localStorage.getItem("theme");
     return savedTheme ? savedTheme === "dark" : false;
   });
 
   useEffect(() => {
     localStorage.setItem("theme", isDarkMode ? "dark" : "light");
+    document.documentElement.dataset.theme = isDarkMode ? "dark" : "light";
   }, [isDarkMode]);
 
   const toggleTheme = () => {
     setIsDarkMode(!isDarkMode);
   };
 
-  const theme = isDarkMode ? darkTheme : lightTheme;
-
   return (
     <ThemeContext.Provider value={{ isDarkMode, toggleTheme }}>
-      <MuiThemeProvider theme={theme}>{children}</MuiThemeProvider>
+      {children}
     </ThemeContext.Provider>
   );
 };
