@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/iwanhae/kabinet/internal/catalog"
 	"github.com/iwanhae/kabinet/internal/compact"
+	"github.com/iwanhae/kabinet/internal/schema"
 	"github.com/iwanhae/kabinet/internal/wal"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -209,9 +211,19 @@ func TestMergeDeduplicatesAcrossFiles(t *testing.T) {
 		return out
 	}
 
-	dup := testEvent("uid-a", "1", ts)
-	p1 := convert("one", []*corev1.Event{dup, testEvent("uid-b", "2", ts.Add(time.Minute))})
-	p2 := convert("two", []*corev1.Event{dup, testEvent("uid-c", "3", ts.Add(2*time.Minute))})
+	older := testEvent("uid-a", "1", ts)
+	older.Message = "older duplicate"
+	newer := older.DeepCopy()
+	newer.LastTimestamp = metav1.NewTime(ts.Add(30 * time.Second))
+	newer.Message = "newer duplicate"
+
+	tieOne := testEvent("uid-tie", "4", ts.Add(45*time.Second))
+	tieOne.Message = "first tie"
+	tieTwo := tieOne.DeepCopy()
+	tieTwo.Message = "second tie"
+
+	p1 := convert("one", []*corev1.Event{older, tieOne, testEvent("uid-b", "2", ts.Add(time.Minute))})
+	p2 := convert("two", []*corev1.Event{newer, tieTwo, testEvent("uid-c", "3", ts.Add(2*time.Minute))})
 
 	merged := filepath.Join(tmpDir, "merged.parquet")
 	result, err := compact.Run(context.Background(), compact.Job{
@@ -221,7 +233,43 @@ func TestMergeDeduplicatesAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge failed: %v", err)
 	}
-	if result.Rows != 3 {
-		t.Fatalf("expected 3 rows after cross-file dedup, got %d", result.Rows)
+	if result.Rows != 4 {
+		t.Fatalf("expected 4 rows after cross-file dedup, got %d", result.Rows)
+	}
+
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	parquet := "read_parquet(" + schema.QuotePath(merged) + ")"
+	var message string
+	if err := db.QueryRow("SELECT message FROM " + parquet + " WHERE metadata.uid = 'uid-a'").Scan(&message); err != nil {
+		t.Fatal(err)
+	}
+	if message != "newer duplicate" {
+		t.Fatalf("expected latest duplicate, got %q", message)
+	}
+	if err := db.QueryRow("SELECT message FROM " + parquet + " WHERE metadata.uid = 'uid-tie'").Scan(&message); err != nil {
+		t.Fatal(err)
+	}
+	if message != "second tie" {
+		t.Fatalf("expected deterministic filename tie-break, got %q", message)
+	}
+
+	rows, err := db.Query("SELECT * FROM " + parquet + " LIMIT 0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range columns {
+		if column == "filename" || column == "file_row_number" {
+			t.Fatalf("virtual row locator leaked into output schema: %s", column)
+		}
 	}
 }

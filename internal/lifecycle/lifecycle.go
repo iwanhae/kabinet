@@ -132,11 +132,9 @@ func (m *Manager) convert(ctx context.Context) error {
 		return nil
 	}
 
-	if len(segments) > maxSegmentsPerConvert {
-		segments = segments[:maxSegmentsPerConvert]
-	}
-	inputs := make([]string, len(segments))
-	for i, seg := range segments {
+	batch, batchSize := selectConvertBatch(segments, m.cfg.ConvertThresholdBytes)
+	inputs := make([]string, len(batch))
+	for i, seg := range batch {
 		inputs[i] = seg.Path
 	}
 
@@ -144,7 +142,8 @@ func (m *Manager) convert(ctx context.Context) error {
 	tmpOut := filepath.Join(m.cfg.TempDir, fmt.Sprintf("convert_%d.parquet", seq))
 	defer os.Remove(tmpOut)
 
-	log.Printf("lifecycle: converting %d wal segments (%d bytes) to parquet", len(segments), totalSize)
+	log.Printf("lifecycle: converting %d wal segments (%d bytes) to parquet; backlog remaining=%d segments (%d bytes)",
+		len(batch), batchSize, len(segments)-len(batch), totalSize-batchSize)
 	result, err := m.runCompactor(ctx, compact.Job{
 		Mode:          compact.ModeConvert,
 		Inputs:        inputs,
@@ -162,7 +161,7 @@ func (m *Manager) convert(ctx context.Context) error {
 		}
 	}
 
-	for _, seg := range segments {
+	for _, seg := range batch {
 		if err := os.Remove(seg.Path); err != nil {
 			log.Printf("lifecycle: failed to remove converted segment %s: %v (duplicates until next merge)", seg.Path, err)
 		}
@@ -185,8 +184,9 @@ func (m *Manager) merge(ctx context.Context) error {
 		return nil
 	}
 
-	inputs := make([]string, len(l1))
-	for i, f := range l1 {
+	batch, batchSize := selectMergeBatch(l1, m.cfg.MergeTargetBytes, m.cfg.MaxL1Files)
+	inputs := make([]string, len(batch))
+	for i, f := range batch {
 		inputs[i] = f.Path
 	}
 
@@ -194,7 +194,8 @@ func (m *Manager) merge(ctx context.Context) error {
 	tmpOut := filepath.Join(m.cfg.TempDir, fmt.Sprintf("merge_%d.parquet", seq))
 	defer os.Remove(tmpOut)
 
-	log.Printf("lifecycle: merging %d l1 files (%d bytes) into l2", len(l1), totalSize)
+	log.Printf("lifecycle: merging %d l1 files (%d bytes) into l2; backlog remaining=%d files (%d bytes)",
+		len(batch), batchSize, len(l1)-len(batch), totalSize-batchSize)
 	result, err := m.runCompactor(ctx, compact.Job{
 		Mode:          compact.ModeMerge,
 		Inputs:        inputs,
@@ -212,11 +213,37 @@ func (m *Manager) merge(ctx context.Context) error {
 		}
 	}
 
-	for _, f := range l1 {
+	for _, f := range batch {
 		m.cat.Remove(f.Path)
 		m.scheduleDelete(f.Path)
 	}
 	return nil
+}
+
+func selectConvertBatch(segments []wal.Segment, targetBytes int64) ([]wal.Segment, int64) {
+	var size int64
+	count := 0
+	for count < len(segments) && count < maxSegmentsPerConvert {
+		size += segments[count].Size
+		count++
+		if size >= targetBytes {
+			break
+		}
+	}
+	return segments[:count], size
+}
+
+func selectMergeBatch(files []catalog.File, targetBytes int64, maxFiles int) ([]catalog.File, int64) {
+	var size int64
+	count := 0
+	for count < len(files) && count < maxFiles {
+		size += files[count].Size
+		count++
+		if size >= targetBytes {
+			break
+		}
+	}
+	return files[:count], size
 }
 
 // publish moves a compactor output into its level directory and registers it.

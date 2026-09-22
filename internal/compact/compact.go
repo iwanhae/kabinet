@@ -45,12 +45,12 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		return nil, fmt.Errorf("job has no output")
 	}
 
-	var source string
+	var selectSQL string
 	switch job.Mode {
 	case ModeConvert:
-		source = schema.JSONLSource(job.Inputs)
+		selectSQL = fmt.Sprintf("SELECT * FROM %s %s", schema.JSONLSource(job.Inputs), schema.DedupQualify)
 	case ModeMerge:
-		source = schema.ParquetSource(job.Inputs)
+		selectSQL = mergeSelectSQL(job.Inputs)
 	default:
 		return nil, fmt.Errorf("unknown job mode: %q", job.Mode)
 	}
@@ -62,7 +62,7 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	defer db.Close()
 
 	pragmas := fmt.Sprintf(
-		"SET memory_limit='%dMB'; SET temp_directory=%s; SET preserve_insertion_order=false;",
+		"SET memory_limit='%dMB'; SET temp_directory=%s; SET threads=1; SET preserve_insertion_order=false;",
 		job.MemoryLimitMB, schema.QuotePath(job.TempDir),
 	)
 	if _, err := db.ExecContext(ctx, pragmas); err != nil {
@@ -70,8 +70,8 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	}
 
 	copySQL := fmt.Sprintf(
-		"COPY (SELECT * FROM %s %s ORDER BY lastTimestamp) TO %s (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 122880)",
-		source, schema.DedupQualify, schema.QuotePath(job.Output),
+		"COPY (%s) TO %s (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE_BYTES '16MB')",
+		selectSQL, schema.QuotePath(job.Output),
 	)
 	if _, err := db.ExecContext(ctx, copySQL); err != nil {
 		return nil, fmt.Errorf("failed to write %s: %w", job.Output, err)
@@ -88,4 +88,24 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 	}
 
 	return &Result{Rows: rows, MinMs: minMs.Int64, MaxMs: maxMs.Int64}, nil
+}
+
+// mergeSelectSQL keeps the blocking dedup window narrow: only the event key,
+// timestamp, and physical row locator participate in it. The second scan
+// streams full event rows through a semi join into the Parquet writer instead
+// of sorting and spilling the complete payload.
+func mergeSelectSQL(paths []string) string {
+	source := schema.ParquetSourceWithRowLocation(paths)
+	return fmt.Sprintf(`
+		WITH winners AS (
+			SELECT filename, file_row_number
+			FROM %s
+			QUALIFY row_number() OVER (
+				PARTITION BY metadata.uid, metadata.resourceVersion
+				ORDER BY lastTimestamp DESC, filename DESC, file_row_number DESC
+			) = 1
+		)
+		SELECT p.* EXCLUDE (filename, file_row_number)
+		FROM %s AS p
+		SEMI JOIN winners USING (filename, file_row_number)`, source, source)
 }

@@ -105,6 +105,17 @@ func ParquetSource(paths []string) string {
 	return fmt.Sprintf("(SELECT * FROM read_parquet([%s]))", pathList(paths))
 }
 
+// ParquetSourceWithRowLocation reads canonical Parquet files with DuckDB's
+// virtual row-location columns. The (filename, file_row_number) pair uniquely
+// identifies a physical input row and lets compaction select winners using a
+// narrow projection before streaming the full rows in a second pass.
+func ParquetSourceWithRowLocation(paths []string) string {
+	return fmt.Sprintf(
+		"(SELECT * FROM read_parquet([%s], filename=true, file_row_number=true))",
+		pathList(paths),
+	)
+}
+
 // EmptySource returns a zero-row relation with the canonical schema so that
 // queries over a time range with no data still resolve with correct columns.
 func EmptySource() string {
