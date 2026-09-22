@@ -20,10 +20,11 @@ const (
 // Start/End are the event-time range of its contents (not ingestion time), so
 // time-range pruning stays correct when old events arrive late (relists).
 type Segment struct {
-	Path  string
-	Start time.Time
-	End   time.Time
-	Size  int64
+	Path     string
+	Start    time.Time
+	End      time.Time
+	SealedAt time.Time
+	Size     int64
 }
 
 // Overlaps reports whether the segment's time range intersects [start, end].
@@ -92,10 +93,11 @@ func ListSealed(dir string) ([]Segment, error) {
 			continue
 		}
 		segments = append(segments, Segment{
-			Path:  filepath.Join(dir, entry.Name()),
-			Start: start,
-			End:   end,
-			Size:  info.Size(),
+			Path:     filepath.Join(dir, entry.Name()),
+			Start:    start,
+			End:      end,
+			SealedAt: info.ModTime(),
+			Size:     info.Size(),
 		})
 	}
 

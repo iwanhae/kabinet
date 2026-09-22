@@ -16,6 +16,7 @@ import (
 
 	"github.com/iwanhae/kabinet/internal/catalog"
 	"github.com/iwanhae/kabinet/internal/compact"
+	"github.com/iwanhae/kabinet/internal/utils"
 	"github.com/iwanhae/kabinet/internal/wal"
 )
 
@@ -33,8 +34,8 @@ type Config struct {
 	// MergeTargetBytes merges L1 files into one L2 file once their combined
 	// size reaches this target.
 	MergeTargetBytes int64
-	// MaxL1Files merges early once this many L1 files have accumulated,
-	// keeping per-query file counts bounded on low-traffic clusters.
+	// MaxL1Files merges early once this many L1 files have accumulated and
+	// caps the input count of each startup merge job.
 	MaxL1Files int
 	// MemoryLimitMB is passed to the compactor subprocess (DuckDB memory_limit).
 	MemoryLimitMB int
@@ -47,13 +48,13 @@ type Config struct {
 
 func (c *Config) withDefaults() {
 	if c.CompactInterval <= 0 {
-		c.CompactInterval = 10 * time.Minute
+		c.CompactInterval = 6 * time.Hour
 	}
 	if c.ConvertThresholdBytes <= 0 {
-		c.ConvertThresholdBytes = 32 << 20
+		c.ConvertThresholdBytes = 64 << 20
 	}
 	if c.MergeTargetBytes <= 0 {
-		c.MergeTargetBytes = 128 << 20
+		c.MergeTargetBytes = 512 << 20
 	}
 	if c.MaxL1Files <= 0 {
 		c.MaxL1Files = 96
@@ -74,8 +75,9 @@ const maxSegmentsPerConvert = 256
 
 // Manager runs the data-management loop.
 type Manager struct {
-	cfg Config
-	cat *catalog.Catalog
+	cfg    Config
+	cat    *catalog.Catalog
+	runJob func(context.Context, compact.Job) (*compact.Result, error)
 }
 
 // New creates a lifecycle manager.
@@ -84,10 +86,74 @@ func New(cat *catalog.Catalog, cfg Config) *Manager {
 	return &Manager{cfg: cfg, cat: cat}
 }
 
+// CompactStartup consolidates legacy small files in place before the query
+// and ingest layers start. L1 uses the WAL conversion target while L2 uses the
+// regular merge target. A failure in one level does not prevent the other
+// level from being attempted.
+func (m *Manager) CompactStartup(ctx context.Context) error {
+	levels := []struct {
+		level       int
+		targetBytes int64
+	}{
+		{level: catalog.L1, targetBytes: m.cfg.ConvertThresholdBytes},
+		{level: catalog.L2, targetBytes: m.cfg.MergeTargetBytes},
+	}
+
+	var errs utils.MultiError
+	for _, item := range levels {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := m.compactSmallLevel(ctx, item.level, item.targetBytes); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			log.Printf("lifecycle: startup compaction failed level=l%d: %v", item.level, err)
+			errs.Add(fmt.Errorf("l%d startup compaction: %w", item.level, err))
+		}
+	}
+
+	if len(errs.Errors) > 0 {
+		return &errs
+	}
+	return nil
+}
+
+func (m *Manager) compactSmallLevel(ctx context.Context, level int, targetBytes int64) error {
+	before := m.cat.Level(level)
+	beforeBytes := catalogFilesSize(before)
+	log.Printf("lifecycle: startup compaction starting level=l%d files=%d bytes=%d target_bytes=%d",
+		level, len(before), beforeBytes, targetBytes)
+
+	jobs := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		batch, batchSize := selectStartupMergeBatch(m.cat.Level(level), targetBytes, m.cfg.MaxL1Files)
+		if len(batch) == 0 {
+			break
+		}
+
+		log.Printf("lifecycle: startup merging level=l%d inputs=%d input_bytes=%d target_bytes=%d",
+			level, len(batch), batchSize, targetBytes)
+		if err := m.mergeParquetBatch(ctx, batch, level, fmt.Sprintf("startup_merge_l%d", level), true); err != nil {
+			return fmt.Errorf("merge batch %d (%d files, %d bytes): %w", jobs+1, len(batch), batchSize, err)
+		}
+		jobs++
+	}
+
+	after := m.cat.Level(level)
+	log.Printf("lifecycle: startup compaction complete level=l%d jobs=%d files_before=%d files_after=%d bytes_before=%d bytes_after=%d",
+		level, jobs, len(before), len(after), beforeBytes, catalogFilesSize(after))
+	return nil
+}
+
 // Run blocks until ctx is cancelled, executing one maintenance pass per tick.
 func (m *Manager) Run(ctx context.Context) {
-	log.Printf("lifecycle: starting. compact_interval=%s merge_target_bytes=%d storage_limit_bytes=%d",
-		m.cfg.CompactInterval, m.cfg.MergeTargetBytes, m.cfg.StorageLimitBytes)
+	log.Printf("lifecycle: starting. compact_interval=%s compact_target_bytes=%d merge_target_bytes=%d max_l1_files=%d storage_limit_bytes=%d",
+		m.cfg.CompactInterval, m.cfg.ConvertThresholdBytes, m.cfg.MergeTargetBytes, m.cfg.MaxL1Files, m.cfg.StorageLimitBytes)
 
 	ticker := time.NewTicker(m.cfg.TickInterval)
 	defer ticker.Stop()
@@ -127,7 +193,7 @@ func (m *Manager) convert(ctx context.Context) error {
 	for _, seg := range segments {
 		totalSize += seg.Size
 	}
-	backlogAge := time.Since(segments[0].Start)
+	backlogAge := sealedBacklogAge(time.Now(), segments)
 	if totalSize < m.cfg.ConvertThresholdBytes && backlogAge < m.cfg.CompactInterval {
 		return nil
 	}
@@ -144,7 +210,7 @@ func (m *Manager) convert(ctx context.Context) error {
 
 	log.Printf("lifecycle: converting %d wal segments (%d bytes) to parquet; backlog remaining=%d segments (%d bytes)",
 		len(batch), batchSize, len(segments)-len(batch), totalSize-batchSize)
-	result, err := m.runCompactor(ctx, compact.Job{
+	result, err := m.executeCompactor(ctx, compact.Job{
 		Mode:          compact.ModeConvert,
 		Inputs:        inputs,
 		Output:        tmpOut,
@@ -169,6 +235,19 @@ func (m *Manager) convert(ctx context.Context) error {
 	return nil
 }
 
+// sealedBacklogAge returns how long the oldest sealed file has actually been
+// waiting. Segment.Start is event time and may be arbitrarily old after a
+// Kubernetes relist, so it must not be used as the compaction wait time.
+func sealedBacklogAge(now time.Time, segments []wal.Segment) time.Duration {
+	oldest := segments[0].SealedAt
+	for _, seg := range segments[1:] {
+		if seg.SealedAt.Before(oldest) {
+			oldest = seg.SealedAt
+		}
+	}
+	return now.Sub(oldest)
+}
+
 // merge combines the accumulated L1 files into a single deduplicated L2 file.
 func (m *Manager) merge(ctx context.Context) error {
 	l1 := m.cat.Level(catalog.L1)
@@ -185,18 +264,25 @@ func (m *Manager) merge(ctx context.Context) error {
 	}
 
 	batch, batchSize := selectMergeBatch(l1, m.cfg.MergeTargetBytes, m.cfg.MaxL1Files)
+	log.Printf("lifecycle: merging %d l1 files (%d bytes) into l2; backlog remaining=%d files (%d bytes)",
+		len(batch), batchSize, len(l1)-len(batch), totalSize-batchSize)
+	return m.mergeParquetBatch(ctx, batch, catalog.L2, "merge", false)
+}
+
+// mergeParquetBatch merges archive files, publishes the result to outputLevel,
+// then retires the inputs. Startup compaction deletes immediately because no
+// query can be in flight; regular lifecycle merges retain the deletion grace.
+func (m *Manager) mergeParquetBatch(ctx context.Context, batch []catalog.File, outputLevel int, tempPrefix string, deleteImmediately bool) error {
 	inputs := make([]string, len(batch))
 	for i, f := range batch {
 		inputs[i] = f.Path
 	}
 
 	seq := m.cat.NextSeq()
-	tmpOut := filepath.Join(m.cfg.TempDir, fmt.Sprintf("merge_%d.parquet", seq))
+	tmpOut := filepath.Join(m.cfg.TempDir, fmt.Sprintf("%s_%d.parquet", tempPrefix, seq))
 	defer os.Remove(tmpOut)
 
-	log.Printf("lifecycle: merging %d l1 files (%d bytes) into l2; backlog remaining=%d files (%d bytes)",
-		len(batch), batchSize, len(l1)-len(batch), totalSize-batchSize)
-	result, err := m.runCompactor(ctx, compact.Job{
+	result, err := m.executeCompactor(ctx, compact.Job{
 		Mode:          compact.ModeMerge,
 		Inputs:        inputs,
 		Output:        tmpOut,
@@ -208,16 +294,29 @@ func (m *Manager) merge(ctx context.Context) error {
 	}
 
 	if result.Rows > 0 {
-		if err := m.publish(tmpOut, catalog.L2, result, seq); err != nil {
+		if err := m.publish(tmpOut, outputLevel, result, seq); err != nil {
 			return err
 		}
 	}
 
 	for _, f := range batch {
 		m.cat.Remove(f.Path)
-		m.scheduleDelete(f.Path)
+		if deleteImmediately {
+			if err := os.Remove(f.Path); err != nil && !os.IsNotExist(err) {
+				log.Printf("lifecycle: startup compaction failed to delete %s: %v", f.Path, err)
+			}
+		} else {
+			m.scheduleDelete(f.Path)
+		}
 	}
 	return nil
+}
+
+func (m *Manager) executeCompactor(ctx context.Context, job compact.Job) (*compact.Result, error) {
+	if m.runJob != nil {
+		return m.runJob(ctx, job)
+	}
+	return m.runCompactor(ctx, job)
 }
 
 func selectConvertBatch(segments []wal.Segment, targetBytes int64) ([]wal.Segment, int64) {
@@ -244,6 +343,48 @@ func selectMergeBatch(files []catalog.File, targetBytes int64, maxFiles int) ([]
 		}
 	}
 	return files[:count], size
+}
+
+// selectStartupMergeBatch returns the oldest mergeable run of small files.
+// Files at or above targetBytes are barriers so the resulting time range does
+// not span an already well-sized file. A trailing run is merged when it has at
+// least two files even if it does not reach the target.
+func selectStartupMergeBatch(files []catalog.File, targetBytes int64, maxFiles int) ([]catalog.File, int64) {
+	if targetBytes <= 0 || maxFiles < 2 {
+		return nil, 0
+	}
+
+	batch := make([]catalog.File, 0, maxFiles)
+	var size int64
+	for _, file := range files {
+		if file.Size >= targetBytes {
+			if len(batch) >= 2 {
+				return batch, size
+			}
+			batch = batch[:0]
+			size = 0
+			continue
+		}
+
+		batch = append(batch, file)
+		size += file.Size
+		if size >= targetBytes || len(batch) >= maxFiles {
+			return batch, size
+		}
+	}
+
+	if len(batch) >= 2 {
+		return batch, size
+	}
+	return nil, 0
+}
+
+func catalogFilesSize(files []catalog.File) int64 {
+	var size int64
+	for _, file := range files {
+		size += file.Size
+	}
+	return size
 }
 
 // publish moves a compactor output into its level directory and registers it.

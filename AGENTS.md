@@ -21,11 +21,11 @@ Three strictly separated layers that communicate only through the filesystem and
 - `internal/wal` — segment writer, sealing, crash recovery, active-segment snapshots
 - `internal/catalog` — in-memory index of archive Parquet files; the directory is the source of truth (time range + seq encoded in filenames), rebuilt by scan at startup
 - `internal/compact` — convert/merge job execution (runs inside `compactor`) + OOM guard
-- `internal/lifecycle` — scheduling, compactor subprocess invocation, retention, grace-period deletes
+- `internal/lifecycle` — blocking startup consolidation for undersized L1/L2 files, periodic scheduling, compactor subprocess invocation, retention, grace-period deletes
 - `internal/query` — `$events` planning and execution, row serialization/streaming
 - `internal/api` — HTTP handlers: `/query`, `/stats`, `/download` (gzipped JSONL), `/mcp` (MCP streamable HTTP), `/metrics` (Prometheus), `/debug/pprof/*`, SPA fallback routing
 - `internal/mcpserver` — MCP server (official Go SDK, stateless streamable HTTP): `query_events` + `get_stats` tools; the `query_events` description embeds the full query guide and renders the schema from `internal/schema.Columns`
-- `internal/config` — Env vars: `DATA_DIR` (default `data`), `STORAGE_LIMIT_GB` (10), `LISTEN_PORT` (8080), `WAL_ROTATE_SECONDS` (60), `WAL_ROTATE_MB` (8), `COMPACT_INTERVAL_SECONDS` (600), `COMPACT_MEMORY_LIMIT_MB` (512), `MERGE_TARGET_MB` (128)
+- `internal/config` — Env vars: `DATA_DIR` (default `data`), `STORAGE_LIMIT_GB` (10), `LISTEN_PORT` (8080), `WAL_ROTATE_SECONDS` (60), `WAL_ROTATE_MB` (8), `COMPACT_INTERVAL_SECONDS` (21600), `COMPACT_TARGET_MB` (64), `COMPACT_MEMORY_LIMIT_MB` (512), `MERGE_TARGET_MB` (512)
 - `internal/metrics` — Prometheus counter `kabinet_events_collected_total`
 - `internal/utils` — `MultiError` type
 
@@ -71,7 +71,8 @@ docker build -t kabinet .  # multi-stage: node build -> go build with CGO_ENABLE
 ## Key Conventions
 
 - `$events` macro in queries expands to `UNION ALL BY NAME` of relevant Parquet files + raw WAL segments filtered by time range — always include narrow `start`/`end`
-- The lifecycle scheduler ticks every 1 minute; segments convert when the backlog exceeds 32MB or `COMPACT_INTERVAL_SECONDS`; L1 merges into L2 at `MERGE_TARGET_MB` or 96 files
+- Before ingest and query start, a one-time pass merges adjacent undersized L1 files toward `COMPACT_TARGET_MB` and L2 files toward `MERGE_TARGET_MB`, preserving their levels
+- The lifecycle scheduler ticks every 1 minute; segments convert when the backlog exceeds `COMPACT_TARGET_MB` or `COMPACT_INTERVAL_SECONDS`; L1 merges into L2 at `MERGE_TARGET_MB` or 96 files
 - Data files are immutable once published; deletions are delayed by a grace period so in-flight queries finish
 - ESLint flat config (`eslint.config.js`); Prettier runs via `eslint-plugin-prettier` (no separate `.prettierrc`)
 - Go module: `github.com/iwanhae/kabinet`, requires Go 1.25

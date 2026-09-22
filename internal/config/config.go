@@ -19,6 +19,7 @@ type Config struct {
 
 	// Manage (compaction)
 	CompactInterval      time.Duration
+	CompactTargetBytes   int64
 	CompactMemoryLimitMB int
 	MergeTargetBytes     int64
 }
@@ -32,9 +33,10 @@ func Load() *Config {
 		ListenPort:           getEnv("LISTEN_PORT", "8080"),
 		WalRotateInterval:    time.Duration(getEnvAsInt64("WAL_ROTATE_SECONDS", 60)) * time.Second,
 		WalRotateBytes:       getEnvAsInt64("WAL_ROTATE_MB", 8) * 1024 * 1024,
-		CompactInterval:      time.Duration(getEnvAsInt64("COMPACT_INTERVAL_SECONDS", 600)) * time.Second,
+		CompactInterval:      time.Duration(getEnvAsInt64("COMPACT_INTERVAL_SECONDS", 21600)) * time.Second,
+		CompactTargetBytes:   getEnvAsInt64("COMPACT_TARGET_MB", 64) * 1024 * 1024,
 		CompactMemoryLimitMB: int(getEnvAsInt64("COMPACT_MEMORY_LIMIT_MB", 512)),
-		MergeTargetBytes:     getEnvAsInt64("MERGE_TARGET_MB", 128) * 1024 * 1024,
+		MergeTargetBytes:     getEnvAsInt64("MERGE_TARGET_MB", 512) * 1024 * 1024,
 	}
 
 	log.Printf("config: loaded configuration: DataDir=%s StorageLimitBytes=%d ListenPort=%s WalRotateInterval=%s CompactInterval=%s",

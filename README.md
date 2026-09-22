@@ -18,7 +18,7 @@ Kabinet addresses these problems with a streamlined, all-in-one approach:
 
 - **Real-Time Collection**: Uses the Kubernetes `WATCH` API to subscribe to events directly, ensuring minimal latency.
 - **Durable Ingestion**: Incoming events are appended as raw JSON to a zstd-compressed JSONL write-ahead log. Every flush is a complete compression frame, so a crash costs at most the last few seconds of unflushed events.
-- **Automated Data Lifecycle**: A background scheduler converts WAL segments into ZSTD Parquet files and merges small files into larger ones, deduplicating events on every pass. The heavy work runs in a memory-bounded subprocess so it can never take the server down. Oldest files are pruned when the storage limit is reached.
+- **Automated Data Lifecycle**: Before serving traffic, a one-time startup pass consolidates undersized L1 and L2 files in place. A background scheduler then converts WAL segments into ZSTD Parquet files and merges L1 files into L2, deduplicating events on every pass. The heavy work runs in a memory-bounded subprocess so it can never take the server down. Oldest files are pruned when the storage limit is reached.
 - **Simplified Architecture**: Runs as a single deployable image, containing the event collector, lifecycle manager, and API server. This eliminates the need for external databases or complex pipelines.
 - **Powerful Analytics**: By leveraging DuckDB, every query transparently unions the recent WAL segments with the historical Parquet files, providing a unified view for analysis.
 - **Rich Web Interface**: Features a modern, responsive React-based web UI with real-time dashboards, advanced query builder, and interactive visualizations.
@@ -33,6 +33,7 @@ The backend is split into three strictly separated layers that communicate only 
     - Rotates segments by time/size and seals them with an atomic rename; torn tails from a crash are truncated at recovery.
 
 2.  **Manage (Lifecycle + Compactor)**: A scheduler that:
+    - Consolidates undersized L1 files toward 64MiB and L2 files toward 512MiB once at startup, before ingest and query services start.
     - Converts sealed WAL segments into L1 Parquet files and merges them into larger L2 files (`data/archive/`), deduplicating by `(metadata.uid, metadata.resourceVersion)` on every pass.
     - Runs the heavy conversion in a separate `compactor` subprocess with a DuckDB memory limit, disk spilling, and an RSS watchdog — an out-of-memory situation kills the compactor, never the server.
     - Enforces a storage limit by deleting the oldest Parquet files when the total size exceeds the configured capacity.
@@ -219,7 +220,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 ### **Intelligent Storage Management**
 
 - **Tiered Storage**: Recent data lives in zstd-compressed JSONL WAL segments; history is compacted into L1 and then merged L2 Parquet files
-- **Automatic Compaction**: WAL segments convert to Parquet when the backlog exceeds 32MB or the compaction interval; small Parquet files merge once they reach the merge target, deduplicating on every pass
+- **Automatic Compaction**: WAL segments convert to Parquet when the backlog exceeds 64MiB or the compaction interval; startup also consolidates legacy small L1/L2 files toward their configured targets, deduplicating on every pass
 - **Memory-Safe**: Compaction runs in a subprocess with a DuckDB memory limit, disk spilling, and an RSS watchdog — it can be OOM-killed without affecting the server
 - **Space Management**: Automatic cleanup when storage limits are reached (default: 10GB)
 - **ZSTD Compression**: Efficient compression for long-term storage (roughly 10x smaller than just storing the raw events)
@@ -329,9 +330,10 @@ The application can be configured using the following environment variables:
 | `LISTEN_PORT`             | The port on which the API server will listen.                     | `8080`  | `8888`        |
 | `WAL_ROTATE_SECONDS`      | Max age of the active WAL segment before it is sealed.            | `60`    | `30`          |
 | `WAL_ROTATE_MB`           | Max size of the active WAL segment before it is sealed.           | `8`     | `16`          |
-| `COMPACT_INTERVAL_SECONDS`| Max time sealed segments wait before conversion to Parquet.       | `600`   | `300`         |
+| `COMPACT_INTERVAL_SECONDS`| Max time sealed segments wait before conversion to Parquet.       | `21600` | `3600`        |
+| `COMPACT_TARGET_MB`       | Sealed WAL backlog size that triggers conversion to L1 Parquet.   | `64`    | `128`         |
 | `COMPACT_MEMORY_LIMIT_MB` | DuckDB memory limit for the compactor subprocess.                 | `512`   | `1024`        |
-| `MERGE_TARGET_MB`         | Combined L1 size that triggers a merge into one L2 file.          | `128`   | `256`         |
+| `MERGE_TARGET_MB`         | Combined L1 size that triggers a merge into one L2 file.          | `512`   | `1024`        |
 | `KABINET_COMPACTOR_PATH`  | Explicit path to the `compactor` binary.                          | (auto)  | `/opt/compactor` |
 
 ## Development

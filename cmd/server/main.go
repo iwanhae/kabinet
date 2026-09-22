@@ -56,6 +56,34 @@ func main() {
 		log.Fatalf("main: failed to create tmp directory: %v", err)
 	}
 
+	// --- Catalog ---
+	cat, err := catalog.Open(archiveDir)
+	if err != nil {
+		log.Fatalf("main: failed to open catalog: %v", err)
+	}
+
+	// --- Manage (lifecycle) ---
+	manager := lifecycle.New(cat, lifecycle.Config{
+		WalDir:                walDir,
+		TempDir:               tmpDir,
+		StorageLimitBytes:     cfg.StorageLimitBytes,
+		CompactInterval:       cfg.CompactInterval,
+		ConvertThresholdBytes: cfg.CompactTargetBytes,
+		MergeTargetBytes:      cfg.MergeTargetBytes,
+		MemoryLimitMB:         cfg.CompactMemoryLimitMB,
+	})
+	if err := manager.CompactStartup(ctx); err != nil {
+		if ctx.Err() != nil {
+			log.Println("main: startup compaction cancelled; exiting")
+			return
+		}
+		log.Printf("main: startup compaction failed; continuing startup: %v", err)
+	}
+	if ctx.Err() != nil {
+		log.Println("main: startup cancelled; exiting")
+		return
+	}
+
 	// --- Ingest (WAL) ---
 	walWriter, err := wal.NewWriter(ctx, wal.Options{
 		Dir:            walDir,
@@ -67,27 +95,12 @@ func main() {
 		log.Fatalf("main: failed to initialize wal: %v", err)
 	}
 
-	// --- Catalog ---
-	cat, err := catalog.Open(archiveDir)
-	if err != nil {
-		log.Fatalf("main: failed to open catalog: %v", err)
-	}
-
 	// --- Query ---
 	executor, err := query.New(cat, walWriter, walDir)
 	if err != nil {
 		log.Fatalf("main: failed to initialize query executor: %v", err)
 	}
 
-	// --- Manage (lifecycle) ---
-	manager := lifecycle.New(cat, lifecycle.Config{
-		WalDir:            walDir,
-		TempDir:           tmpDir,
-		StorageLimitBytes: cfg.StorageLimitBytes,
-		CompactInterval:   cfg.CompactInterval,
-		MergeTargetBytes:  cfg.MergeTargetBytes,
-		MemoryLimitMB:     cfg.CompactMemoryLimitMB,
-	})
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
