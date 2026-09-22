@@ -1,6 +1,6 @@
 // Package compact implements the heavy data-management work: converting raw
-// WAL segments to canonical Parquet and merging Parquet files, with
-// deduplication applied on every pass. It is executed inside the compactor
+// WAL segments to canonical Parquet, merging Parquet files with deduplication,
+// and streaming row-preserving repacks. It is executed inside the compactor
 // subprocess (cmd/compactor) so an OOM kills the compactor, not the server.
 package compact
 
@@ -17,6 +17,7 @@ import (
 const (
 	ModeConvert = "convert" // raw JSONL segments -> canonical Parquet
 	ModeMerge   = "merge"   // canonical Parquet files -> one canonical Parquet
+	ModeRepack  = "repack"  // canonical Parquet files -> one canonical Parquet, preserving every row
 )
 
 // Job is the unit of work passed to the compactor subprocess as JSON on stdin.
@@ -51,6 +52,8 @@ func Run(ctx context.Context, job Job) (*Result, error) {
 		selectSQL = fmt.Sprintf("SELECT * FROM %s %s", schema.JSONLSource(job.Inputs), schema.DedupQualify)
 	case ModeMerge:
 		selectSQL = mergeSelectSQL(job.Inputs)
+	case ModeRepack:
+		selectSQL = fmt.Sprintf("SELECT * FROM %s", schema.ParquetSource(job.Inputs))
 	default:
 		return nil, fmt.Errorf("unknown job mode: %q", job.Mode)
 	}

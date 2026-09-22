@@ -8,7 +8,7 @@ Kabinet collects Kubernetes events in real time into a zstd-compressed JSONL wri
 Three strictly separated layers that communicate only through the filesystem and the in-memory catalog:
 
 1. **Ingest** (`internal/wal`) — raw K8s Event JSON appended to `data/wal/*.jsonl.zst` segments. Each batch flush is one complete zstd frame (crash loses at most the last unflushed batch; a torn tail is truncated at recovery). Segments rotate by time/size, are sealed by rename, and are named by their event-time range (`events_<minMs>_<maxMs>.jsonl.zst`).
-2. **Manage** (`internal/lifecycle` + `internal/compact`) — a scheduler converts sealed segments to L1 Parquet and merges L1 files into L2 (`data/archive/l1`, `l2`), deduplicating by `(metadata.uid, metadata.resourceVersion)` on every pass. Heavy work runs in the `compactor` subprocess (JSON job on stdin, result on stdout) with DuckDB `memory_limit` + disk spill, an RSS self-kill watchdog, and `oom_score_adj=1000` so OOM takes out the compactor, never the server. Retention deletes oldest archive files past `STORAGE_LIMIT_GB`.
+2. **Manage** (`internal/lifecycle` + `internal/compact`) — a scheduler converts sealed segments to L1 Parquet and merges L1 files into L2 (`data/archive/l1`, `l2`), deduplicating by `(metadata.uid, metadata.resourceVersion)`. Startup L2-to-L2 consolidation is a row-preserving streaming repack without another dedup pass. Heavy work runs in the `compactor` subprocess (JSON job on stdin, result on stdout) with DuckDB `memory_limit` + disk spill, an RSS self-kill watchdog, and `oom_score_adj=1000` so OOM takes out the compactor, never the server. Retention deletes oldest archive files past `STORAGE_LIMIT_GB`.
 3. **Query** (`internal/query`) — resolves the `$events` macro into a `UNION ALL BY NAME` of overlapping Parquet files (via catalog) and raw WAL segments (sealed + a stable snapshot of the active one), executed on a read-only in-memory DuckDB.
 
 **Two binaries:**
@@ -25,11 +25,11 @@ Three strictly separated layers that communicate only through the filesystem and
 - `internal/query` — `$events` planning and execution, row serialization/streaming
 - `internal/api` — HTTP handlers: `/query`, `/stats`, `/download` (gzipped JSONL), `/mcp` (MCP streamable HTTP), `/metrics` (Prometheus), `/debug/pprof/*`, SPA fallback routing
 - `internal/mcpserver` — MCP server (official Go SDK, stateless streamable HTTP): `query_events` + `get_stats` tools; the `query_events` description embeds the full query guide and renders the schema from `internal/schema.Columns`
-- `internal/config` — Env vars: `DATA_DIR` (default `data`), `STORAGE_LIMIT_GB` (10), `LISTEN_PORT` (8080), `WAL_ROTATE_SECONDS` (60), `WAL_ROTATE_MB` (8), `COMPACT_INTERVAL_SECONDS` (21600), `COMPACT_TARGET_MB` (64), `COMPACT_MEMORY_LIMIT_MB` (512), `MERGE_TARGET_MB` (512)
+- `internal/config` — Env vars: `DATA_DIR` (default `data`), `STORAGE_LIMIT_GB` (10), `LISTEN_PORT` (8080), `WAL_ROTATE_SECONDS` (60), `WAL_ROTATE_MB` (8), `COMPACT_INTERVAL_SECONDS` (21600), `COMPACT_TARGET_MB` (64), `COMPACT_MEMORY_LIMIT_MB` (512), `MERGE_TARGET_MB` (512), `STARTUP_L2_TARGET_MB` (340)
 - `internal/metrics` — Prometheus counter `kabinet_events_collected_total`
 - `internal/utils` — `MultiError` type
 
-**Dedup semantics:** one row per `(metadata.uid, metadata.resourceVersion)`, enforced at every compaction/merge pass — never at query time, so recently re-listed events may appear duplicated until their segments are compacted.
+**Dedup semantics:** one row per `(metadata.uid, metadata.resourceVersion)` is enforced during WAL-to-L1 conversion and L1-to-L2 merge, never at query time. Startup L2-to-L2 repack preserves existing rows without another dedup pass.
 
 **Frontend (`src/`):**
 - React 19, TypeScript 5.8 (strict), Vite 7, SWR, Wouter (router) — no component library: custom primitives in `src/ui/` styled with CSS Modules + design tokens (`src/styles/tokens.css`, dark mode = `[data-theme="dark"]` token override)
@@ -71,7 +71,7 @@ docker build -t kabinet .  # multi-stage: node build -> go build with CGO_ENABLE
 ## Key Conventions
 
 - `$events` macro in queries expands to `UNION ALL BY NAME` of relevant Parquet files + raw WAL segments filtered by time range — always include narrow `start`/`end`
-- Before ingest and query start, a one-time pass merges adjacent undersized L1 files toward `COMPACT_TARGET_MB` and L2 files toward `MERGE_TARGET_MB`, preserving their levels
+- Before ingest and query start, a one-time pass deduplicates adjacent undersized L1 files toward `COMPACT_TARGET_MB` and streaming-repacks L2 files toward `STARTUP_L2_TARGET_MB`, preserving their levels
 - The lifecycle scheduler ticks every 1 minute; segments convert when the backlog exceeds `COMPACT_TARGET_MB` or `COMPACT_INTERVAL_SECONDS`; L1 merges into L2 at `MERGE_TARGET_MB` or 96 files
 - Data files are immutable once published; deletions are delayed by a grace period so in-flight queries finish
 - ESLint flat config (`eslint.config.js`); Prettier runs via `eslint-plugin-prettier` (no separate `.prettierrc`)

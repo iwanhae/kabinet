@@ -34,6 +34,9 @@ type Config struct {
 	// MergeTargetBytes merges L1 files into one L2 file once their combined
 	// size reaches this target.
 	MergeTargetBytes int64
+	// StartupL2TargetBytes is the input size target for the one-time streaming
+	// L2 repack. It is separate because legacy L2 files expand when rewritten.
+	StartupL2TargetBytes int64
 	// MaxL1Files merges early once this many L1 files have accumulated and
 	// caps the input count of each startup merge job.
 	MaxL1Files int
@@ -55,6 +58,9 @@ func (c *Config) withDefaults() {
 	}
 	if c.MergeTargetBytes <= 0 {
 		c.MergeTargetBytes = 512 << 20
+	}
+	if c.StartupL2TargetBytes <= 0 {
+		c.StartupL2TargetBytes = 340 << 20
 	}
 	if c.MaxL1Files <= 0 {
 		c.MaxL1Files = 96
@@ -87,16 +93,17 @@ func New(cat *catalog.Catalog, cfg Config) *Manager {
 }
 
 // CompactStartup consolidates legacy small files in place before the query
-// and ingest layers start. L1 uses the WAL conversion target while L2 uses the
-// regular merge target. A failure in one level does not prevent the other
-// level from being attempted.
+// and ingest layers start. L1 is deduplicated; L2 is streamed without another
+// global dedup pass. A failure in one level does not prevent the other level
+// from being attempted.
 func (m *Manager) CompactStartup(ctx context.Context) error {
 	levels := []struct {
 		level       int
 		targetBytes int64
+		mode        string
 	}{
-		{level: catalog.L1, targetBytes: m.cfg.ConvertThresholdBytes},
-		{level: catalog.L2, targetBytes: m.cfg.MergeTargetBytes},
+		{level: catalog.L1, targetBytes: m.cfg.ConvertThresholdBytes, mode: compact.ModeMerge},
+		{level: catalog.L2, targetBytes: m.cfg.StartupL2TargetBytes, mode: compact.ModeRepack},
 	}
 
 	var errs utils.MultiError
@@ -104,7 +111,7 @@ func (m *Manager) CompactStartup(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := m.compactSmallLevel(ctx, item.level, item.targetBytes); err != nil {
+		if err := m.compactSmallLevel(ctx, item.level, item.targetBytes, item.mode); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
@@ -119,11 +126,11 @@ func (m *Manager) CompactStartup(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) compactSmallLevel(ctx context.Context, level int, targetBytes int64) error {
+func (m *Manager) compactSmallLevel(ctx context.Context, level int, targetBytes int64, mode string) error {
 	before := m.cat.Level(level)
 	beforeBytes := catalogFilesSize(before)
-	log.Printf("lifecycle: startup compaction starting level=l%d files=%d bytes=%d target_bytes=%d",
-		level, len(before), beforeBytes, targetBytes)
+	log.Printf("lifecycle: startup compaction starting level=l%d mode=%s files=%d bytes=%d target_bytes=%d",
+		level, mode, len(before), beforeBytes, targetBytes)
 
 	jobs := 0
 	for {
@@ -136,9 +143,9 @@ func (m *Manager) compactSmallLevel(ctx context.Context, level int, targetBytes 
 			break
 		}
 
-		log.Printf("lifecycle: startup merging level=l%d inputs=%d input_bytes=%d target_bytes=%d",
-			level, len(batch), batchSize, targetBytes)
-		if err := m.mergeParquetBatch(ctx, batch, level, fmt.Sprintf("startup_merge_l%d", level), true); err != nil {
+		log.Printf("lifecycle: startup merging level=l%d mode=%s inputs=%d input_bytes=%d target_bytes=%d",
+			level, mode, len(batch), batchSize, targetBytes)
+		if err := m.mergeParquetBatch(ctx, batch, level, mode, fmt.Sprintf("startup_%s_l%d", mode, level), true); err != nil {
 			return fmt.Errorf("merge batch %d (%d files, %d bytes): %w", jobs+1, len(batch), batchSize, err)
 		}
 		jobs++
@@ -152,8 +159,8 @@ func (m *Manager) compactSmallLevel(ctx context.Context, level int, targetBytes 
 
 // Run blocks until ctx is cancelled, executing one maintenance pass per tick.
 func (m *Manager) Run(ctx context.Context) {
-	log.Printf("lifecycle: starting. compact_interval=%s compact_target_bytes=%d merge_target_bytes=%d max_l1_files=%d storage_limit_bytes=%d",
-		m.cfg.CompactInterval, m.cfg.ConvertThresholdBytes, m.cfg.MergeTargetBytes, m.cfg.MaxL1Files, m.cfg.StorageLimitBytes)
+	log.Printf("lifecycle: starting. compact_interval=%s compact_target_bytes=%d merge_target_bytes=%d startup_l2_target_bytes=%d max_l1_files=%d storage_limit_bytes=%d",
+		m.cfg.CompactInterval, m.cfg.ConvertThresholdBytes, m.cfg.MergeTargetBytes, m.cfg.StartupL2TargetBytes, m.cfg.MaxL1Files, m.cfg.StorageLimitBytes)
 
 	ticker := time.NewTicker(m.cfg.TickInterval)
 	defer ticker.Stop()
@@ -266,13 +273,13 @@ func (m *Manager) merge(ctx context.Context) error {
 	batch, batchSize := selectMergeBatch(l1, m.cfg.MergeTargetBytes, m.cfg.MaxL1Files)
 	log.Printf("lifecycle: merging %d l1 files (%d bytes) into l2; backlog remaining=%d files (%d bytes)",
 		len(batch), batchSize, len(l1)-len(batch), totalSize-batchSize)
-	return m.mergeParquetBatch(ctx, batch, catalog.L2, "merge", false)
+	return m.mergeParquetBatch(ctx, batch, catalog.L2, compact.ModeMerge, "merge", false)
 }
 
 // mergeParquetBatch merges archive files, publishes the result to outputLevel,
 // then retires the inputs. Startup compaction deletes immediately because no
 // query can be in flight; regular lifecycle merges retain the deletion grace.
-func (m *Manager) mergeParquetBatch(ctx context.Context, batch []catalog.File, outputLevel int, tempPrefix string, deleteImmediately bool) error {
+func (m *Manager) mergeParquetBatch(ctx context.Context, batch []catalog.File, outputLevel int, mode string, tempPrefix string, deleteImmediately bool) error {
 	inputs := make([]string, len(batch))
 	for i, f := range batch {
 		inputs[i] = f.Path
@@ -283,7 +290,7 @@ func (m *Manager) mergeParquetBatch(ctx context.Context, batch []catalog.File, o
 	defer os.Remove(tmpOut)
 
 	result, err := m.executeCompactor(ctx, compact.Job{
-		Mode:          compact.ModeMerge,
+		Mode:          mode,
 		Inputs:        inputs,
 		Output:        tmpOut,
 		TempDir:       m.cfg.TempDir,

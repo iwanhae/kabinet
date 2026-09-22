@@ -237,6 +237,18 @@ func TestMergeDeduplicatesAcrossFiles(t *testing.T) {
 		t.Fatalf("expected 4 rows after cross-file dedup, got %d", result.Rows)
 	}
 
+	repacked := filepath.Join(tmpDir, "repacked.parquet")
+	repackedResult, err := compact.Run(context.Background(), compact.Job{
+		Mode: compact.ModeRepack, Inputs: []string{p1, p2},
+		Output: repacked, TempDir: tmpDir, MemoryLimitMB: 256,
+	})
+	if err != nil {
+		t.Fatalf("repack failed: %v", err)
+	}
+	if repackedResult.Rows != 6 {
+		t.Fatalf("expected repack to preserve all 6 rows, got %d", repackedResult.Rows)
+	}
+
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		t.Fatal(err)
@@ -256,6 +268,14 @@ func TestMergeDeduplicatesAcrossFiles(t *testing.T) {
 	}
 	if message != "second tie" {
 		t.Fatalf("expected deterministic filename tie-break, got %q", message)
+	}
+
+	var duplicateCount int
+	if err := db.QueryRow("SELECT count(*) FROM read_parquet(" + schema.QuotePath(repacked) + ") WHERE metadata.uid = 'uid-a'").Scan(&duplicateCount); err != nil {
+		t.Fatal(err)
+	}
+	if duplicateCount != 2 {
+		t.Fatalf("expected repack to preserve both duplicate rows, got %d", duplicateCount)
 	}
 
 	rows, err := db.Query("SELECT * FROM " + parquet + " LIMIT 0")

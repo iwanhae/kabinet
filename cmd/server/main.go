@@ -70,6 +70,7 @@ func main() {
 		CompactInterval:       cfg.CompactInterval,
 		ConvertThresholdBytes: cfg.CompactTargetBytes,
 		MergeTargetBytes:      cfg.MergeTargetBytes,
+		StartupL2TargetBytes:  cfg.StartupL2TargetBytes,
 		MemoryLimitMB:         cfg.CompactMemoryLimitMB,
 	})
 	if err := manager.CompactStartup(ctx); err != nil {

@@ -22,6 +22,7 @@ type Config struct {
 	CompactTargetBytes   int64
 	CompactMemoryLimitMB int
 	MergeTargetBytes     int64
+	StartupL2TargetBytes int64
 }
 
 // Load reads configuration from environment variables and returns a new Config struct.
@@ -37,6 +38,7 @@ func Load() *Config {
 		CompactTargetBytes:   getEnvAsInt64("COMPACT_TARGET_MB", 64) * 1024 * 1024,
 		CompactMemoryLimitMB: int(getEnvAsInt64("COMPACT_MEMORY_LIMIT_MB", 512)),
 		MergeTargetBytes:     getEnvAsInt64("MERGE_TARGET_MB", 512) * 1024 * 1024,
+		StartupL2TargetBytes: getEnvAsInt64("STARTUP_L2_TARGET_MB", 340) * 1024 * 1024,
 	}
 
 	log.Printf("config: loaded configuration: DataDir=%s StorageLimitBytes=%d ListenPort=%s WalRotateInterval=%s CompactInterval=%s",

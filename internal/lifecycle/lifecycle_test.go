@@ -136,13 +136,16 @@ func TestCompactStartupMergesInPlaceAndRemovesInputs(t *testing.T) {
 		TempDir:               tmpDir,
 		ConvertThresholdBytes: 100,
 		MergeTargetBytes:      200,
+		StartupL2TargetBytes:  200,
 		MaxL1Files:            96,
 	})
 
 	var inputCounts []int
+	var modes []string
 	jobNumber := 0
 	m.runJob = func(_ context.Context, job compact.Job) (*compact.Result, error) {
 		inputCounts = append(inputCounts, len(job.Inputs))
+		modes = append(modes, job.Mode)
 		var size int64
 		for _, input := range job.Inputs {
 			info, err := os.Stat(input)
@@ -164,6 +167,9 @@ func TestCompactStartupMergesInPlaceAndRemovesInputs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(inputCounts, []int{3, 2, 4}) {
 		t.Fatalf("unexpected startup batches: %v", inputCounts)
+	}
+	if !reflect.DeepEqual(modes, []string{compact.ModeMerge, compact.ModeMerge, compact.ModeRepack}) {
+		t.Fatalf("unexpected startup modes: %v", modes)
 	}
 	if got := len(cat.Level(catalog.L1)); got != 2 {
 		t.Fatalf("expected 2 compacted l1 files, got %d", got)
@@ -197,13 +203,16 @@ func TestCompactStartupContinuesWithL2AfterL1Failure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := New(cat, Config{TempDir: tmpDir, ConvertThresholdBytes: 100, MergeTargetBytes: 200, MaxL1Files: 96})
+	m := New(cat, Config{TempDir: tmpDir, ConvertThresholdBytes: 100, MergeTargetBytes: 200, StartupL2TargetBytes: 200, MaxL1Files: 96})
 	l2Ran := false
 	m.runJob = func(_ context.Context, job compact.Job) (*compact.Result, error) {
 		if strings.Contains(job.Inputs[0], string(filepath.Separator)+"l1"+string(filepath.Separator)) {
 			return nil, errors.New("broken l1 input")
 		}
 		l2Ran = true
+		if job.Mode != compact.ModeRepack {
+			return nil, fmt.Errorf("expected l2 repack mode, got %s", job.Mode)
+		}
 		if err := os.WriteFile(job.Output, make([]byte, 120), 0o644); err != nil {
 			return nil, err
 		}
@@ -239,7 +248,7 @@ func TestCompactStartupReprocessesOutputsWhenBatchIsCapped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := New(cat, Config{TempDir: tmpDir, ConvertThresholdBytes: 100, MergeTargetBytes: 200, MaxL1Files: 3})
+	m := New(cat, Config{TempDir: tmpDir, ConvertThresholdBytes: 100, MergeTargetBytes: 200, StartupL2TargetBytes: 200, MaxL1Files: 3})
 	var inputCounts []int
 	jobNumber := 0
 	m.runJob = func(_ context.Context, job compact.Job) (*compact.Result, error) {
