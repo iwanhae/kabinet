@@ -75,7 +75,7 @@ docker build -t kabinet .  # multi-stage: node build -> go build with CGO_ENABLE
 - The lifecycle scheduler ticks every 1 minute; segments convert when the backlog exceeds `COMPACT_TARGET_MB` or `COMPACT_INTERVAL_SECONDS`; L1 merges into L2 at `MERGE_TARGET_MB` or 96 files
 - Data files are immutable once published; deletions are delayed by a grace period so in-flight queries finish
 - ESLint flat config (`eslint.config.js`); Prettier runs via `eslint-plugin-prettier` (no separate `.prettierrc`)
-- Go module: `github.com/iwanhae/kabinet`, requires Go 1.25
+- Go module: `github.com/iwanhae/kabinet`, requires Go 1.27.1
 - Conventional Commits: `feat|fix|refactor|docs|chore(scope): message`
 
 ## Agent Checklist (Before Finishing Work)

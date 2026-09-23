@@ -122,7 +122,7 @@ graph LR
 
 ### Prerequisites
 
-- Go 1.25+ (CGO enabled — DuckDB is embedded via `go-duckdb`)
+- Go 1.27.1+ (CGO enabled — DuckDB is embedded via `go-duckdb`)
 - Node.js 22+ (for frontend development)
 - Access to a Kubernetes cluster (a valid `kubeconfig` file)
 
