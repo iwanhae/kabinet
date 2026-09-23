@@ -81,7 +81,7 @@ All backend access goes through the hooks — never call `fetch` in components.
 - The global range lives in URL params (`from`, `to`) as raw strings (`now-30m`, ISO). `useTimeRange()` returns both raw and parsed values plus `setTimeRange()`.
 - Relative syntax: `now-<n><s|m|h|d|w>` (`src/utils/timeRange.ts`).
 - Chart bucketing: `getDynamicInterval(from, to, targetBuckets)` returns a structured `Interval`; render SQL with `intervalToSql()` and compute bucket ends with `bucketEnd()` (`src/utils/time.ts`).
-- **Always bucket/sort on `TS_EXPR`** (`src/lib/sql/expr.ts`) — `COALESCE(lastTimestamp, eventTime, metadata.creationTimestamp)` — or events.k8s.io events with null `lastTimestamp` silently vanish.
+- **Always bucket/sort on `TS_EXPR`** (`src/lib/sql/expr.ts`), which resolves to Kabinet's canonical `timestamp` column.
 
 ### 3. Filters (global)
 

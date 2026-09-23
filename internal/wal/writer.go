@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,9 +18,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iwanhae/kabinet/internal/schema"
 	"github.com/klauspost/compress/zstd"
 	corev1 "k8s.io/api/core/v1"
 )
+
+var ErrMissingTimestamp = errors.New("event has no canonical timestamp")
+
+type queuedEvent struct {
+	event     *corev1.Event
+	timestamp time.Time
+}
 
 // Options configures a Writer.
 type Options struct {
@@ -55,7 +64,7 @@ func (o *Options) withDefaults() {
 // Writer appends Kubernetes events to the WAL.
 type Writer struct {
 	opts    Options
-	eventCh chan *corev1.Event
+	eventCh chan queuedEvent
 	enc     *zstd.Encoder
 	wg      sync.WaitGroup
 
@@ -97,7 +106,7 @@ func NewWriter(ctx context.Context, opts Options) (*Writer, error) {
 
 	w := &Writer{
 		opts:    opts,
-		eventCh: make(chan *corev1.Event, 2000),
+		eventCh: make(chan queuedEvent, 2000),
 		enc:     enc,
 	}
 	w.wg.Add(1)
@@ -107,8 +116,15 @@ func NewWriter(ctx context.Context, opts Options) (*Writer, error) {
 
 // Append queues an event for the next batch flush.
 func (w *Writer) Append(ctx context.Context, event *corev1.Event) error {
+	if event == nil {
+		return fmt.Errorf("%w: nil event", ErrMissingTimestamp)
+	}
+	timestamp, ok := eventTimestamp(event)
+	if !ok {
+		return fmt.Errorf("%w: uid=%s resourceVersion=%s", ErrMissingTimestamp, event.UID, event.ResourceVersion)
+	}
 	select {
-	case w.eventCh <- event:
+	case w.eventCh <- queuedEvent{event: event, timestamp: timestamp}:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -165,8 +181,8 @@ func (w *Writer) run(ctx context.Context) {
 			w.sealLocked()
 			w.mu.Unlock()
 			return
-		case event := <-w.eventCh:
-			line, err := json.Marshal(event)
+		case queued := <-w.eventCh:
+			line, err := json.Marshal(queued.event)
 			if err != nil {
 				log.Printf("wal: failed to marshal event: %v", err)
 				continue
@@ -174,7 +190,7 @@ func (w *Writer) run(ctx context.Context) {
 			buf.Write(line)
 			buf.WriteByte('\n')
 			pending++
-			ts := eventTime(event)
+			ts := queued.timestamp
 			if batchMin.IsZero() || ts.Before(batchMin) {
 				batchMin = ts
 			}
@@ -192,19 +208,17 @@ func (w *Writer) run(ctx context.Context) {
 	}
 }
 
-// eventTime returns the effective event time used for segment time ranges,
-// mirroring the lastTimestamp fallbacks in the schema projection.
-func eventTime(event *corev1.Event) time.Time {
-	if !event.LastTimestamp.IsZero() {
-		return event.LastTimestamp.Time
+func eventTimestamp(event *corev1.Event) (time.Time, bool) {
+	var series *time.Time
+	if event.Series != nil {
+		series = &event.Series.LastObservedTime.Time
 	}
-	if !event.FirstTimestamp.IsZero() {
-		return event.FirstTimestamp.Time
-	}
-	if !event.CreationTimestamp.IsZero() {
-		return event.CreationTimestamp.Time
-	}
-	return time.Now()
+	return schema.ResolveTimestamp(
+		series,
+		&event.LastTimestamp.Time,
+		&event.FirstTimestamp.Time,
+		&event.CreationTimestamp.Time,
+	)
 }
 
 // flush compresses one batch of JSONL into a single zstd frame and appends it

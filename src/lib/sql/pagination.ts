@@ -103,8 +103,7 @@ export function buildPageQuery(
 
 /** Extracts the cursor for the next page from the last raw row of a page. */
 export function cursorFromRow(row: EventResult, sort: SortSpec): PageCursor {
-  const ts =
-    row.lastTimestamp ?? row.eventTime ?? row.metadata.creationTimestamp;
+  const ts = row.timestamp;
   const cursor: PageCursor = { ts, uid: row.metadata.uid };
   if (sort.key === "count") cursor.extra = row.count ?? 1;
   if (sort.key === "namespace") cursor.extra = row.metadata.namespace ?? "";

@@ -16,8 +16,7 @@ export interface ColumnDef {
   render: (event: EventResult) => React.ReactNode;
 }
 
-export const eventTimestamp = (event: EventResult): string =>
-  event.lastTimestamp ?? event.eventTime ?? event.metadata.creationTimestamp;
+export const eventTimestamp = (event: EventResult): string => event.timestamp;
 
 export const COLUMNS: ColumnDef[] = [
   {

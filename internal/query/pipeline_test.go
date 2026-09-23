@@ -68,8 +68,8 @@ func TestPipelineConvertAndQuery(t *testing.T) {
 	ts := time.Now().Add(-time.Hour).Truncate(time.Second)
 
 	// Segment 1: two events, one duplicated (same uid+resourceVersion, as an
-	// informer relist would produce), and one event with missing
-	// firstTimestamp/count that must be normalized at read time.
+	// informer relist would produce), and one event with missing source
+	// timestamps/count. Only canonical timestamp and count are derived.
 	missing := testEvent("uid-b", "2", ts.Add(time.Minute))
 	missing.FirstTimestamp = metav1.Time{}
 	missing.LastTimestamp = metav1.Time{}
@@ -117,8 +117,11 @@ func TestPipelineConvertAndQuery(t *testing.T) {
 	}
 
 	// Segment 2 stays raw in the WAL: the query must union Parquet + JSONL.
+	seriesEvent := testEvent("uid-c", "3", ts.Add(2*time.Minute))
+	observed := ts.Add(5*time.Minute + 1234*time.Microsecond)
+	seriesEvent.Series = &corev1.EventSeries{LastObservedTime: metav1.NewMicroTime(observed)}
 	writeSealedSegment(t, walDir, tmpDir, []*corev1.Event{
-		testEvent("uid-c", "3", ts.Add(2*time.Minute)),
+		seriesEvent,
 	})
 
 	executor, err := New(cat, nil, walDir)
@@ -140,10 +143,19 @@ func TestPipelineConvertAndQuery(t *testing.T) {
 	if len(meta.Files) != 2 {
 		t.Fatalf("expected 2 source files (1 parquet, 1 segment), got %v", meta.Files)
 	}
-
-	// Read-time normalization of the event with missing fields.
 	rows, _, err = executor.RangeQuery(context.Background(),
-		`SELECT "count", firstTimestamp, lastTimestamp FROM $events WHERE metadata.uid = 'uid-b'`, start, end)
+		`SELECT timestamp FROM $events WHERE metadata.uid = 'uid-c'`, observed.Add(-10*time.Microsecond), observed.Add(10*time.Microsecond))
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("series timestamp query failed: rows=%v err=%v", rows, err)
+	}
+	if got, ok := rows[0]["timestamp"].(time.Time); !ok || !got.Equal(observed) {
+		t.Fatalf("expected series.lastObservedTime %s, got %v", observed, rows[0]["timestamp"])
+	}
+
+	// Canonical timestamp falls back to creationTimestamp while source time
+	// fields remain unchanged.
+	rows, _, err = executor.RangeQuery(context.Background(),
+		`SELECT "count", timestamp, firstTimestamp, lastTimestamp FROM $events WHERE metadata.uid = 'uid-b'`, start, end)
 	if err != nil {
 		t.Fatalf("normalization query failed: %v", err)
 	}
@@ -153,8 +165,11 @@ func TestPipelineConvertAndQuery(t *testing.T) {
 	if rows[0]["count"] != int32(1) {
 		t.Fatalf("expected normalized count 1, got %v (%T)", rows[0]["count"], rows[0]["count"])
 	}
-	if rows[0]["firstTimestamp"] == nil || rows[0]["lastTimestamp"] == nil {
-		t.Fatalf("expected timestamps backfilled from creationTimestamp, got %v", rows[0])
+	if rows[0]["timestamp"] == nil {
+		t.Fatalf("expected canonical timestamp from creationTimestamp, got %v", rows[0])
+	}
+	if rows[0]["firstTimestamp"] != nil || rows[0]["lastTimestamp"] != nil {
+		t.Fatalf("expected source timestamps to remain null, got %v", rows[0])
 	}
 
 	// A range with no data must still resolve with the canonical schema.
@@ -291,5 +306,77 @@ func TestMergeDeduplicatesAcrossFiles(t *testing.T) {
 		if column == "filename" || column == "file_row_number" {
 			t.Fatalf("virtual row locator leaked into output schema: %s", column)
 		}
+	}
+}
+
+func TestLegacyParquetMigrationBackfillsTimestampWithinRange(t *testing.T) {
+	base := t.TempDir()
+	walDir := filepath.Join(base, "wal")
+	tmpDir := filepath.Join(base, "tmp")
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ts := time.Now().Add(-time.Hour).Truncate(time.Second)
+	late := testEvent("late", "1", ts)
+	late.Series = &corev1.EventSeries{LastObservedTime: metav1.NewMicroTime(ts.Add(2*time.Minute + 321*time.Microsecond))}
+	writeSealedSegment(t, walDir, tmpDir, []*corev1.Event{
+		late,
+		testEvent("early", "2", ts.Add(time.Minute)),
+	})
+	segments, err := wal.ListSealed(walDir)
+	if err != nil || len(segments) != 1 {
+		t.Fatalf("segments=%d err=%v", len(segments), err)
+	}
+	canonical := filepath.Join(tmpDir, "canonical.parquet")
+	if _, err := compact.Run(context.Background(), compact.Job{
+		Mode: compact.ModeConvert, Inputs: []string{segments[0].Path}, Output: canonical,
+		TempDir: tmpDir, MemoryLimitMB: 256,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	legacy := filepath.Join(tmpDir, "legacy.parquet")
+	if _, err := db.Exec("COPY (SELECT * EXCLUDE (timestamp) FROM read_parquet(" + schema.QuotePath(canonical) + ")) TO " + schema.QuotePath(legacy) + " (FORMAT parquet)"); err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := compact.Run(context.Background(), compact.Job{
+		Mode: compact.ModeInspect, LegacyInputs: []string{legacy}, TempDir: tmpDir, MemoryLimitMB: 256,
+	})
+	if err != nil || inspection.Rows != 2 || inspection.MinUs == 0 || inspection.MaxUs == 0 {
+		t.Fatalf("inspection=%+v err=%v", inspection, err)
+	}
+	startUs := ts.Add(-time.Minute).UnixMicro()
+	endUs := ts.Add(3 * time.Minute).UnixMicro()
+	migrated := filepath.Join(tmpDir, "migrated.parquet")
+	result, err := compact.Run(context.Background(), compact.Job{
+		Mode: compact.ModeMigrate, LegacyInputs: []string{legacy}, Output: migrated,
+		TempDir: tmpDir, MemoryLimitMB: 256, RangeStartUs: &startUs, RangeEndUs: &endUs,
+	})
+	if err != nil || result.Rows != 2 {
+		t.Fatalf("migration=%+v err=%v", result, err)
+	}
+	var migratedCount int
+	if err := db.QueryRow("SELECT count(*) FROM read_parquet("+schema.QuotePath(migrated)+") WHERE epoch_us(timestamp) >= ? AND epoch_us(timestamp) < ?", startUs, endUs).Scan(&migratedCount); err != nil {
+		t.Fatal(err)
+	}
+	if migratedCount != 2 {
+		t.Fatalf("expected both migrated rows inside the requested range, got %d", migratedCount)
+	}
+	var inversions int
+	if err := db.QueryRow(`WITH physical_order AS (
+		SELECT timestamp, lag(timestamp) OVER (ORDER BY file_row_number) AS previous
+		FROM read_parquet(` + schema.QuotePath(migrated) + `, file_row_number=true)
+	) SELECT count(*) FROM physical_order WHERE timestamp < previous`).Scan(&inversions); err != nil {
+		t.Fatal(err)
+	}
+	if inversions != 0 {
+		t.Fatalf("hourly migration output is not timestamp-sorted: %d inversions", inversions)
+	}
+	if result.MaxMs != (late.Series.LastObservedTime.UnixMicro()+999)/1000 {
+		t.Fatalf("expected conservative max millisecond, got %d", result.MaxMs)
 	}
 }

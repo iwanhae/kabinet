@@ -108,8 +108,8 @@ const McpPage: React.FC = () => {
             window. Always pass the narrowest window; it controls scan cost.
           </li>
           <li>
-            Use <code>lastTimestamp</code> for all time filters and bucketing (
-            <code>eventTime</code> is frequently NULL).
+            Use Kabinet&apos;s canonical <code>timestamp</code> field for all
+            time filters, sorting, and bucketing.
           </li>
           <li>
             Nested fields use dot notation: <code>metadata.namespace</code>,{" "}
@@ -127,7 +127,7 @@ const McpPage: React.FC = () => {
         </ul>
 
         <h3>Example</h3>
-        <CodeBlock>{`SELECT time_bucket(INTERVAL 5 MINUTE, lastTimestamp) AS bucket,
+        <CodeBlock>{`SELECT time_bucket(INTERVAL 5 MINUTE, timestamp) AS bucket,
        reason, COUNT(*) AS c
 FROM $events
 WHERE type = 'Warning' AND metadata.namespace = 'prod'

@@ -24,14 +24,15 @@ export interface EventResult {
     component: string;
     host: string;
   };
-  firstTimestamp: string;
-  lastTimestamp: string;
+  timestamp: string;
+  firstTimestamp: string | null;
+  lastTimestamp: string | null;
   count: number;
   type: string;
   eventTime?: string;
   series?: {
     count: number;
-    lastObservedTime: string;
+    lastObservedTime: string | null;
   };
   action?: string;
   related?: {

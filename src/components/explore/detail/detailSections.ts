@@ -29,6 +29,7 @@ export const DETAIL_SECTIONS: DetailSection[] = [
   {
     title: "Timestamps",
     rows: [
+      { label: "Kabinet timestamp", get: (e) => e.timestamp, mono: true },
       { label: "First seen", get: (e) => e.firstTimestamp, mono: true },
       { label: "Last seen", get: (e) => e.lastTimestamp, mono: true },
       { label: "Event time", get: (e) => e.eventTime, mono: true },

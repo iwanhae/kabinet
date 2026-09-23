@@ -221,6 +221,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 
 - **Tiered Storage**: Recent data lives in zstd-compressed JSONL WAL segments; history is compacted into L1 and then merged L2 Parquet files
 - **Automatic Compaction**: WAL segments convert to Parquet when the backlog exceeds 64MiB or the compaction interval; startup deduplicates legacy small L1 files and streaming-repacks L2 files without a blocking global dedup window
+- **Resumable format upgrades**: pre-v2 archives are rewritten once at startup with one full-level query per UTC hour; each small hourly result is timestamp-sorted in memory, then streaming-repacked to the configured size targets without another sort. Progress survives restarts and the server fails closed if validation does not pass
 - **Memory-Safe**: Compaction runs in a subprocess with a DuckDB memory limit, disk spilling, and an RSS watchdog — it can be OOM-killed without affecting the server
 - **Space Management**: Automatic cleanup when storage limits are reached (default: 10GB)
 - **ZSTD Compression**: Efficient compression for long-term storage (roughly 10x smaller than just storing the raw events)
@@ -276,7 +277,7 @@ curl -L "http://localhost:8080/download?from=2025-01-01T00:00:00Z&to=2025-01-02T
   --output events.jsonl.gz
 ```
 
-The response sets `Content-Type: application/jsonl` and `Content-Encoding: gzip`, and events are ordered by `lastTimestamp`.
+The response sets `Content-Type: application/jsonl` and `Content-Encoding: gzip`, and events are ordered by `timestamp`.
 The Explore page includes a **Download** button that calls this endpoint with the current filters.
 
 ### Example: Top Event Reasons
@@ -365,7 +366,7 @@ This project welcomes contributions! Here are some helpful resources:
 
 ## Event Schema Reference
 
-Events are stored on disk as raw Kubernetes Event JSON and projected into this canonical schema at read time (see `internal/schema`). Missing `firstTimestamp`/`lastTimestamp` values are backfilled from `metadata.creationTimestamp`, and a missing `count` becomes `1`.
+Events are stored on disk as raw Kubernetes Event JSON and projected into this canonical schema at read time (see `internal/schema`). Kabinet computes `timestamp` from `series.lastObservedTime`, `lastTimestamp`, `firstTimestamp`, then `metadata.creationTimestamp`. The source timestamp fields remain unchanged for inspection; every time-based operation uses only `timestamp`. A missing `count` becomes `1`.
 
 ```sql
 -- Columns of $events
@@ -397,6 +398,7 @@ source STRUCT(
 	component VARCHAR,
 	host VARCHAR
 ),
+timestamp TIMESTAMPTZ,
 firstTimestamp TIMESTAMPTZ,
 lastTimestamp TIMESTAMPTZ,
 "count" INTEGER,

@@ -17,6 +17,7 @@ import (
 	"github.com/iwanhae/kabinet/internal/config"
 	"github.com/iwanhae/kabinet/internal/lifecycle"
 	"github.com/iwanhae/kabinet/internal/metrics"
+	"github.com/iwanhae/kabinet/internal/migration"
 	"github.com/iwanhae/kabinet/internal/query"
 	"github.com/iwanhae/kabinet/internal/wal"
 )
@@ -54,6 +55,19 @@ func main() {
 	}
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		log.Fatalf("main: failed to create tmp directory: %v", err)
+	}
+
+	// Upgrade the complete on-disk dataset before catalog, query, or ingest
+	// can observe it. Fail closed: the resumable migration retains its source
+	// data and continues on the next process start.
+	if err := migration.EnsureV2(ctx, migration.Config{
+		DataDir:       cfg.DataDir,
+		TempDir:       tmpDir,
+		L1TargetBytes: cfg.CompactTargetBytes,
+		L2TargetBytes: cfg.StartupL2TargetBytes,
+		MemoryLimitMB: cfg.CompactMemoryLimitMB,
+	}); err != nil {
+		log.Fatalf("main: data format migration failed: %v", err)
 	}
 
 	// --- Catalog ---
@@ -174,9 +188,8 @@ func runCollector(ctx context.Context, walWriter *wal.Writer) {
 			// track collected event
 			metrics.EventsCollected.Inc()
 
-			// Events are stored as raw JSON; field fallbacks (empty
-			// firstTimestamp/count) are applied at read time by the schema
-			// projection.
+			// Events are stored as raw JSON. Canonical timestamp validity is
+			// enforced by the WAL; projection normalizes only derived fields.
 			if err := walWriter.Append(ctx, &event); err != nil {
 				log.Printf("collector: failed to append event: %v", err)
 			}

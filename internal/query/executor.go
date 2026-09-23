@@ -59,8 +59,8 @@ func (e *Executor) Close() {
 // every data source overlapping [start, end].
 func (e *Executor) buildEventsQuery(query string, start, end time.Time) (string, []SourceFile, error) {
 	between := fmt.Sprintf(
-		"lastTimestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s'",
-		start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339),
+		"timestamp BETWEEN TIMESTAMPTZ '%s' AND TIMESTAMPTZ '%s'",
+		start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano),
 	)
 
 	var sources []string
@@ -143,14 +143,14 @@ func (e *Executor) RangeQuery(ctx context.Context, query string, start, end time
 }
 
 // StreamEvents selects full events in [start, end] (optionally filtered by
-// where) ordered by lastTimestamp, streaming each row to handler without
+// where) ordered by timestamp, streaming each row to handler without
 // buffering the result set.
 func (e *Executor) StreamEvents(ctx context.Context, where string, start, end time.Time, handler func(map[string]any) error) (*Result, error) {
 	baseQuery := "SELECT * FROM $events"
 	if strings.TrimSpace(where) != "" {
 		baseQuery += " WHERE " + where
 	}
-	baseQuery += " ORDER BY lastTimestamp"
+	baseQuery += " ORDER BY timestamp"
 
 	finalQuery, files, err := e.buildEventsQuery(baseQuery, start, end)
 	if err != nil {

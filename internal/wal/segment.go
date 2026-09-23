@@ -37,7 +37,11 @@ func openName(start time.Time) string {
 }
 
 func sealedName(start, end time.Time) string {
-	return fmt.Sprintf("%s%d_%d%s", filePrefix, start.UnixMilli(), end.UnixMilli(), sealedSuffix)
+	// The filename stores millisecond envelopes while canonical timestamps can
+	// have microsecond precision. Round the maximum up so pruning never drops a
+	// row in the final fractional millisecond.
+	endMs := (end.UnixMicro() + 999) / 1000
+	return fmt.Sprintf("%s%d_%d%s", filePrefix, start.UnixMilli(), endMs, sealedSuffix)
 }
 
 // parseOpenName extracts the start time from "events_<startMs>.jsonl.zst.open".

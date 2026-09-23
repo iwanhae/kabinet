@@ -161,11 +161,11 @@ Notice the single quotes around `'kube-system'` and `'Warning'` are preserved, e
 
 For time-based analysis, it is essential to use the correct timestamp field and appropriate functions.
 
-### Use `lastTimestamp`
+### Use `timestamp`
 
-The primary timestamp for events is `lastTimestamp`. The `eventTime` field is deprecated and may contain null or incorrect values, making it unreliable for temporal queries.
+The primary timestamp for events is Kabinet's computed `timestamp`: `series.lastObservedTime`, then `lastTimestamp`, `firstTimestamp`, and `metadata.creationTimestamp`.
 
-**Always use `lastTimestamp` for any time-based analysis.**
+**Always use `timestamp` for any time-based analysis.**
 
 ### Time-Windowing Functions
 
@@ -181,7 +181,7 @@ This query pattern is used by the `TimelineHistogram` component. The `${interval
 
 ```sql
 SELECT
-    time_bucket(INTERVAL '${interval}', lastTimestamp) AS time_bucket,
+    time_bucket(INTERVAL '${interval}', timestamp) AS time_bucket,
     type,
     COUNT(*) AS count
 FROM $events
@@ -194,7 +194,7 @@ ORDER BY time_bucket, type
 
 ```sql
 SELECT
-    time_bucket(INTERVAL 15 MINUTE, lastTimestamp) AS bucket,
+    time_bucket(INTERVAL 15 MINUTE, timestamp) AS bucket,
     reason,
     COUNT(*) AS count
 FROM $events
@@ -235,7 +235,7 @@ curl http://localhost:8080/stats
 
 ### Download Endpoint: `GET /download`
 
-Streams the result of a `WHERE` clause over a time range as gzipped JSON Lines ordered by `lastTimestamp`. The `where` clause you use in the query builder can be passed directly to this endpoint.
+Streams the result of a `WHERE` clause over a time range as gzipped JSON Lines ordered by `timestamp`. The `where` clause you use in the query builder can be passed directly to this endpoint.
 
 ```bash
 curl -L "http://localhost:8080/download?from=2025-01-01T00:00:00Z&to=2025-01-02T00:00:00Z&where=type%20=%20'Warning'" \

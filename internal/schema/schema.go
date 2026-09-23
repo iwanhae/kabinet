@@ -8,6 +8,7 @@ package schema
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -15,7 +16,23 @@ const (
 	metadataType  = `STRUCT("name" VARCHAR, "namespace" VARCHAR, uid VARCHAR, resourceVersion VARCHAR, creationTimestamp TIMESTAMPTZ)`
 	sourceType    = `STRUCT(component VARCHAR, host VARCHAR)`
 	seriesType    = `STRUCT("count" INTEGER, lastObservedTime TIMESTAMPTZ)`
+	// TimestampSQLExpr is the only event-time fallback used by Kabinet. Raw
+	// and legacy inputs apply it once to create the canonical timestamp column;
+	// every downstream operation uses that column directly.
+	TimestampSQLExpr = `COALESCE(series.lastObservedTime, lastTimestamp, firstTimestamp, metadata.creationTimestamp)`
 )
+
+// ResolveTimestamp is the Go equivalent of TimestampSQLExpr. Nil and zero
+// values are treated as absent. False means the event violates the canonical
+// timestamp invariant and must not enter the WAL.
+func ResolveTimestamp(series, last, first, creation *time.Time) (time.Time, bool) {
+	for _, candidate := range []*time.Time{series, last, first, creation} {
+		if candidate != nil && !candidate.IsZero() {
+			return *candidate, true
+		}
+	}
+	return time.Time{}, false
+}
 
 // Column is one canonical output column.
 type Column struct {
@@ -26,9 +43,8 @@ type Column struct {
 	rawExpr string
 }
 
-// Columns lists every canonical column in output order. The rawExpr fallbacks
-// replace the field normalization that used to happen at collection time
-// (empty firstTimestamp/lastTimestamp/count on some event sources).
+// Columns lists every canonical column in output order. Source timestamp
+// fields remain untouched; only timestamp receives event-time fallback.
 var Columns = []Column{
 	{Name: "kind", Type: "VARCHAR", rawExpr: `COALESCE(kind, 'Event')`},
 	{Name: "apiVersion", Type: "VARCHAR", rawExpr: `COALESCE(apiVersion, 'v1')`},
@@ -37,8 +53,9 @@ var Columns = []Column{
 	{Name: "reason", Type: "VARCHAR"},
 	{Name: "message", Type: "VARCHAR"},
 	{Name: "source", Type: sourceType},
-	{Name: "firstTimestamp", Type: "TIMESTAMPTZ", rawExpr: `COALESCE(firstTimestamp, metadata.creationTimestamp)`},
-	{Name: "lastTimestamp", Type: "TIMESTAMPTZ", rawExpr: `COALESCE(lastTimestamp, firstTimestamp, metadata.creationTimestamp)`},
+	{Name: "timestamp", Type: "TIMESTAMPTZ", rawExpr: TimestampSQLExpr},
+	{Name: "firstTimestamp", Type: "TIMESTAMPTZ"},
+	{Name: "lastTimestamp", Type: "TIMESTAMPTZ"},
 	{Name: "count", Type: "INTEGER", rawExpr: `CASE WHEN "count" IS NULL OR "count" = 0 THEN 1 ELSE "count" END`},
 	{Name: "type", Type: "VARCHAR"},
 	{Name: "eventTime", Type: "TIMESTAMPTZ"},
@@ -52,7 +69,7 @@ var Columns = []Column{
 // DedupQualify keeps exactly one row per event revision. An event revision is
 // identified by (metadata.uid, metadata.resourceVersion); duplicates appear
 // when the informer relists after a restart.
-const DedupQualify = `QUALIFY row_number() OVER (PARTITION BY metadata.uid, metadata.resourceVersion ORDER BY lastTimestamp DESC) = 1`
+const DedupQualify = `QUALIFY row_number() OVER (PARTITION BY metadata.uid, metadata.resourceVersion ORDER BY timestamp DESC) = 1`
 
 // QuotePath returns p as a single-quoted SQL string literal.
 func QuotePath(p string) string {
@@ -114,6 +131,38 @@ func ParquetSourceWithRowLocation(paths []string) string {
 		"(SELECT * FROM read_parquet([%s], filename=true, file_row_number=true))",
 		pathList(paths),
 	)
+}
+
+// LegacyParquetSourceWithRowLocation reads pre-v2 Parquet files and projects
+// the synthetic timestamp column while retaining physical row locators.
+func LegacyParquetSourceWithRowLocation(paths []string) string {
+	selects := make([]string, 0, len(Columns)+2)
+	for _, c := range Columns {
+		expr := quoteIdent(c.Name)
+		if c.Name == "timestamp" {
+			expr = TimestampSQLExpr
+		}
+		selects = append(selects, fmt.Sprintf("%s AS %s", expr, quoteIdent(c.Name)))
+	}
+	selects = append(selects, "filename", "file_row_number")
+	return fmt.Sprintf(
+		"(SELECT %s FROM read_parquet([%s], filename=true, file_row_number=true, union_by_name=true))",
+		strings.Join(selects, ", "), pathList(paths),
+	)
+}
+
+// ColumnList returns the quoted canonical column names in output order.
+func ColumnList() string {
+	names := make([]string, len(Columns))
+	for i, c := range Columns {
+		names[i] = quoteIdent(c.Name)
+	}
+	return strings.Join(names, ", ")
+}
+
+// RowHashExpr returns a stable hash over every canonical column.
+func RowHashExpr() string {
+	return "hash(" + ColumnList() + ")"
 }
 
 // EmptySource returns a zero-row relation with the canonical schema so that

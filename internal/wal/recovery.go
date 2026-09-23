@@ -3,6 +3,7 @@ package wal
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iwanhae/kabinet/internal/schema"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -23,6 +25,7 @@ func recoverOpenSegments(dir string) error {
 		return fmt.Errorf("failed to read wal directory: %w", err)
 	}
 
+	var recoveryErrors []error
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), openSuffix) {
 			continue
@@ -31,22 +34,28 @@ func recoverOpenSegments(dir string) error {
 			// Leave the file in place so the next start can retry; segment
 			// names are timestamped, so it cannot collide with new segments.
 			log.Printf("wal: failed to recover segment %s: %v", entry.Name(), err)
+			recoveryErrors = append(recoveryErrors, fmt.Errorf("recover %s: %w", entry.Name(), err))
 		}
 	}
-	return nil
+	return errors.Join(recoveryErrors...)
+}
+
+// RecoverOpenSegments seals crash-left open WAL segments before a data-format
+// migration snapshots its immutable inputs. NewWriter performs the same
+// recovery during normal startup.
+func RecoverOpenSegments(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return recoverOpenSegments(dir)
 }
 
 func recoverSegment(dir, name string) error {
 	path := filepath.Join(dir, name)
 
-	start, ok := parseOpenName(name)
+	_, ok := parseOpenName(name)
 	if !ok {
 		return fmt.Errorf("unrecognized open segment name: %s", name)
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("failed to stat segment: %w", err)
 	}
 
 	raw, err := os.ReadFile(path)
@@ -81,11 +90,11 @@ func recoverSegment(dir, name string) error {
 		return fmt.Errorf("failed to close recovered segment: %w", err)
 	}
 
-	// Sealed names carry the event-time range for query pruning; fall back to
-	// segment-creation/mtime when no line has a parseable timestamp.
-	min, max, ok := eventTimeRange(decoded)
-	if !ok {
-		min, max = start, info.ModTime()
+	// Sealed names always carry the canonical timestamp envelope. Recovery
+	// fails closed instead of inventing an ingestion-time fallback.
+	min, max, err := eventTimeRange(decoded)
+	if err != nil {
+		return err
 	}
 	sealed := filepath.Join(dir, sealedName(min, max))
 	if err := os.Rename(tmp.Name(), sealed); err != nil {
@@ -100,43 +109,48 @@ func recoverSegment(dir, name string) error {
 }
 
 // eventTimeRange extracts the effective event-time min/max from raw K8s Event
-// JSONL, applying the same lastTimestamp fallbacks as the schema projection.
-func eventTimeRange(jsonl []byte) (min, max time.Time, ok bool) {
+// JSONL, applying the canonical timestamp fallbacks from the schema projection.
+func eventTimeRange(jsonl []byte) (min, max time.Time, err error) {
 	type eventTimes struct {
 		LastTimestamp  *time.Time `json:"lastTimestamp"`
 		FirstTimestamp *time.Time `json:"firstTimestamp"`
-		Metadata       struct {
+		Series         *struct {
+			LastObservedTime *time.Time `json:"lastObservedTime"`
+		} `json:"series"`
+		Metadata struct {
 			CreationTimestamp *time.Time `json:"creationTimestamp"`
 		} `json:"metadata"`
 	}
 
+	lineNumber := 0
 	for line := range bytes.SplitSeq(jsonl, []byte("\n")) {
 		if len(line) == 0 {
 			continue
 		}
+		lineNumber++
 		var et eventTimes
 		if err := json.Unmarshal(line, &et); err != nil {
-			continue
+			return time.Time{}, time.Time{}, fmt.Errorf("decode WAL event line %d: %w", lineNumber, err)
 		}
-		ts := et.LastTimestamp
-		if ts == nil {
-			ts = et.FirstTimestamp
+		var series *time.Time
+		if et.Series != nil {
+			series = et.Series.LastObservedTime
 		}
-		if ts == nil {
-			ts = et.Metadata.CreationTimestamp
+		ts, ok := schema.ResolveTimestamp(series, et.LastTimestamp, et.FirstTimestamp, et.Metadata.CreationTimestamp)
+		if !ok {
+			return time.Time{}, time.Time{}, fmt.Errorf("WAL event line %d: %w", lineNumber, ErrMissingTimestamp)
 		}
-		if ts == nil || ts.IsZero() {
-			continue
+		if min.IsZero() || ts.Before(min) {
+			min = ts
 		}
-		if !ok || ts.Before(min) {
-			min = *ts
+		if max.IsZero() || ts.After(max) {
+			max = ts
 		}
-		if !ok || ts.After(max) {
-			max = *ts
-		}
-		ok = true
 	}
-	return min, max, ok
+	if min.IsZero() {
+		return time.Time{}, time.Time{}, ErrMissingTimestamp
+	}
+	return min, max, nil
 }
 
 // decodeValidPrefix decompresses as much of raw as possible and trims the

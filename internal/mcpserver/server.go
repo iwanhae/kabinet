@@ -125,13 +125,13 @@ func queryToolDescription() string {
 RULES
 - Query FROM $events — a macro, not a real table. It expands to exactly the data files overlapping [start, end], so ALWAYS pass the narrowest time window that answers the question.
 - start and end are required, RFC3339.
-- Use lastTimestamp for all time filters and bucketing. Do NOT use eventTime (frequently NULL).
+- Use timestamp for all time filters, sorting, and bucketing. It is Kabinet's canonical event time.
 - Nested fields use dot notation: metadata.namespace, involvedObject.name, source.host.
 - type is 'Normal' or 'Warning'. Warnings are where problems live.
 - Node name: source.host. Controller/component: COALESCE(source.component, reportingComponent).
 - Aggregate first (GROUP BY), then fetch raw rows with a tight WHERE and a small LIMIT. Results are truncated at ` + fmt.Sprint(maxRows) + ` rows ("truncated": true).
 - count is the per-event dedup counter (how many times the event repeated); use SUM("count") for true occurrence totals, COUNT(*) for event-row counts.
-- Recently ingested events can appear duplicated until background compaction dedups them by (metadata.uid, metadata.resourceVersion). For exact numbers add: QUALIFY row_number() OVER (PARTITION BY metadata.uid, metadata.resourceVersion ORDER BY lastTimestamp DESC) = 1
+- Recently ingested events can appear duplicated until background compaction dedups them by (metadata.uid, metadata.resourceVersion). For exact numbers add: QUALIFY row_number() OVER (PARTITION BY metadata.uid, metadata.resourceVersion ORDER BY timestamp DESC) = 1
 
 SCHEMA of $events
 ` + schemaDoc() + `
@@ -140,7 +140,7 @@ Warning reasons, most frequent first:
   SELECT reason, COUNT(*) AS c FROM $events WHERE type = 'Warning' GROUP BY reason ORDER BY c DESC LIMIT 20
 
 Timeline of warnings in one namespace (5-minute buckets):
-  SELECT time_bucket(INTERVAL 5 MINUTE, lastTimestamp) AS bucket, COUNT(*) AS c
+  SELECT time_bucket(INTERVAL 5 MINUTE, timestamp) AS bucket, COUNT(*) AS c
   FROM $events WHERE type = 'Warning' AND metadata.namespace = 'prod'
   GROUP BY bucket ORDER BY bucket
 
@@ -150,6 +150,6 @@ Which pods are failing and why:
   GROUP BY pod, reason ORDER BY c DESC LIMIT 20
 
 Read raw messages after narrowing down:
-  SELECT lastTimestamp, reason, message FROM $events
-  WHERE involvedObject.name = 'my-pod-abc123' ORDER BY lastTimestamp DESC LIMIT 50`
+  SELECT timestamp, reason, message FROM $events
+  WHERE involvedObject.name = 'my-pod-abc123' ORDER BY timestamp DESC LIMIT 50`
 }
