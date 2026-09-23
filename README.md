@@ -221,7 +221,7 @@ Once running, open your browser to `http://localhost:8080` to access:
 
 - **Tiered Storage**: Recent data lives in zstd-compressed JSONL WAL segments; history is compacted into L1 and then merged L2 Parquet files
 - **Automatic Compaction**: WAL segments convert to Parquet when the backlog exceeds 64MiB or the compaction interval; startup deduplicates legacy small L1 files and streaming-repacks L2 files without a blocking global dedup window
-- **Resumable format upgrades**: pre-v2 archives are rewritten once at startup with one full-level query per UTC hour; each small hourly result is timestamp-sorted in memory, then streaming-repacked to the configured size targets without another sort. Progress survives restarts and the server fails closed if validation does not pass
+- **Resumable background format upgrades**: pre-v2 WAL is isolated before ingestion starts, then archives are rewritten in the background with one full-level query per UTC hour. Each small hourly result is timestamp-sorted in memory, then streaming-repacked to the configured size targets without another sort. Progress survives restarts; archive queries may fail until the validated archive is atomically installed, while new events continue accumulating in the live WAL
 - **Memory-Safe**: Compaction runs in a subprocess with a DuckDB memory limit, disk spilling, and an RSS watchdog — it can be OOM-killed without affecting the server
 - **Space Management**: Automatic cleanup when storage limits are reached (default: 10GB)
 - **ZSTD Compression**: Efficient compression for long-term storage (roughly 10x smaller than just storing the raw events)

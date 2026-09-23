@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/iwanhae/kabinet/internal/api"
 	"github.com/iwanhae/kabinet/internal/catalog"
@@ -57,17 +58,18 @@ func main() {
 		log.Fatalf("main: failed to create tmp directory: %v", err)
 	}
 
-	// Upgrade the complete on-disk dataset before catalog, query, or ingest
-	// can observe it. Fail closed: the resumable migration retains its source
-	// data and continues on the next process start.
-	if err := migration.EnsureV2(ctx, migration.Config{
+	migrationCfg := migration.Config{
 		DataDir:       cfg.DataDir,
 		TempDir:       tmpDir,
 		L1TargetBytes: cfg.CompactTargetBytes,
 		L2TargetBytes: cfg.StartupL2TargetBytes,
 		MemoryLimitMB: cfg.CompactMemoryLimitMB,
-	}); err != nil {
-		log.Fatalf("main: data format migration failed: %v", err)
+	}
+	// Snapshot and isolate the old WAL before ingestion starts. The expensive
+	// archive rewrite continues in the background after the server is live.
+	migrationPending, err := migration.PrepareV2(migrationCfg)
+	if err != nil {
+		log.Fatalf("main: failed to prepare data format migration: %v", err)
 	}
 
 	// --- Catalog ---
@@ -76,8 +78,9 @@ func main() {
 		log.Fatalf("main: failed to open catalog: %v", err)
 	}
 
-	// --- Manage (lifecycle) ---
-	manager := lifecycle.New(cat, lifecycle.Config{
+	// Lifecycle must not mutate the archive while migration is reading its
+	// snapshot. It starts after cutover and an atomic catalog reload.
+	lifecycleCfg := lifecycle.Config{
 		WalDir:                walDir,
 		TempDir:               tmpDir,
 		StorageLimitBytes:     cfg.StorageLimitBytes,
@@ -86,17 +89,17 @@ func main() {
 		MergeTargetBytes:      cfg.MergeTargetBytes,
 		StartupL2TargetBytes:  cfg.StartupL2TargetBytes,
 		MemoryLimitMB:         cfg.CompactMemoryLimitMB,
-	})
-	if err := manager.CompactStartup(ctx); err != nil {
-		if ctx.Err() != nil {
-			log.Println("main: startup compaction cancelled; exiting")
-			return
-		}
-		log.Printf("main: startup compaction failed; continuing startup: %v", err)
 	}
-	if ctx.Err() != nil {
-		log.Println("main: startup cancelled; exiting")
-		return
+	var manager *lifecycle.Manager
+	if !migrationPending {
+		manager = lifecycle.New(cat, lifecycleCfg)
+		if err := manager.CompactStartup(ctx); err != nil {
+			if ctx.Err() != nil {
+				log.Println("main: startup compaction cancelled; exiting")
+				return
+			}
+			log.Printf("main: startup compaction failed; continuing startup: %v", err)
+		}
 	}
 
 	// --- Ingest (WAL) ---
@@ -119,6 +122,39 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		if migrationPending {
+			log.Println("main: data format migration running in background; archive queries may fail until cutover")
+			for {
+				err := migration.EnsureV2(ctx, migrationCfg)
+				if err == nil {
+					break
+				}
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("main: background data format migration failed (retrying in 1m): %v", err)
+				select {
+				case <-time.After(time.Minute):
+				case <-ctx.Done():
+					return
+				}
+			}
+			for {
+				if err := cat.Reload(); err == nil {
+					break
+				} else {
+					log.Printf("main: failed to reload catalog after migration (retrying in 1m): %v", err)
+				}
+				select {
+				case <-time.After(time.Minute):
+				case <-ctx.Done():
+					return
+				}
+			}
+			log.Println("main: background data format migration complete; archive catalog reloaded")
+			manager = lifecycle.New(cat, lifecycleCfg)
+		}
+
 		manager.Run(ctx)
 	}()
 

@@ -168,3 +168,46 @@ func TestEnsureV2RejectsUnknownFormat(t *testing.T) {
 		t.Fatal("expected unknown format version to fail closed")
 	}
 }
+
+func TestDetachWALIsolatesInputsAndReconcilesRename(t *testing.T) {
+	dataDir := t.TempDir()
+	p := migrationPaths(dataDir)
+	liveDir := filepath.Join(dataDir, "wal")
+	if err := os.MkdirAll(liveDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(liveDir, "events_1_2.jsonl.zst")
+	if err := os.WriteFile(live, []byte("wal"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &state{WAL: []fileSnapshot{snapshot(live, info)}}
+	if err := saveState(p.state, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := detachWAL(p, s); err != nil {
+		t.Fatal(err)
+	}
+	isolated := filepath.Join(p.workspace, "wal-source", filepath.Base(live))
+	if s.WAL[0].Path != isolated {
+		t.Fatalf("WAL path was not updated: %s", s.WAL[0].Path)
+	}
+	if _, err := os.Stat(live); !os.IsNotExist(err) {
+		t.Fatalf("live WAL was not removed: %v", err)
+	}
+	if _, err := os.Stat(isolated); err != nil {
+		t.Fatalf("isolated WAL is missing: %v", err)
+	}
+
+	// Simulate a crash after rename but before the updated path was saved.
+	s.WAL[0].Path = live
+	if err := detachWAL(p, s); err != nil {
+		t.Fatalf("failed to reconcile completed rename: %v", err)
+	}
+	if s.WAL[0].Path != isolated {
+		t.Fatalf("reconciled WAL path was not updated: %s", s.WAL[0].Path)
+	}
+}

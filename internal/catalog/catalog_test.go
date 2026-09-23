@@ -58,3 +58,36 @@ func TestOpenScanAndOverlap(t *testing.T) {
 		t.Fatalf("expected 1 l2 file, got %d", len(got))
 	}
 }
+
+func TestReloadReplacesCatalogSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	l1 := filepath.Join(dir, "l1")
+	if err := os.MkdirAll(l1, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := filepath.Join(l1, "events_1000_2000_1.parquet")
+	if err := os.WriteFile(oldPath, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(oldPath); err != nil {
+		t.Fatal(err)
+	}
+	newPath := filepath.Join(l1, "events_3000_4000_9.parquet")
+	if err := os.WriteFile(newPath, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	files := cat.All()
+	if len(files) != 1 || files[0].Path != newPath {
+		t.Fatalf("reload did not replace catalog snapshot: %+v", files)
+	}
+	if seq := cat.NextSeq(); seq != 10 {
+		t.Fatalf("reload did not replace sequence, got %d", seq)
+	}
+}

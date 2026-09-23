@@ -1,4 +1,5 @@
-// Package migration upgrades the on-disk event format before the server starts.
+// Package migration snapshots and upgrades an on-disk event format while live
+// ingestion continues in a separate WAL generation.
 package migration
 
 import (
@@ -95,15 +96,7 @@ type paths struct {
 // EnsureV2 performs or resumes the timestamp-column migration. It returns
 // only when the live data tree is entirely v2 and safe to open for queries.
 func EnsureV2(ctx context.Context, cfg Config) error {
-	if cfg.MemoryLimitMB <= 0 {
-		cfg.MemoryLimitMB = 512
-	}
-	if cfg.L1TargetBytes <= 0 {
-		cfg.L1TargetBytes = 64 << 20
-	}
-	if cfg.L2TargetBytes <= 0 {
-		cfg.L2TargetBytes = 340 << 20
-	}
+	cfg = withDefaults(cfg)
 	p := migrationPaths(cfg.DataDir)
 	if version, ok, err := readVersion(p.format); err != nil {
 		return err
@@ -120,6 +113,9 @@ func EnsureV2(ctx context.Context, cfg Config) error {
 	}
 	if s == nil { // brand-new empty data directory
 		return writeVersion(p.format)
+	}
+	if err := detachWAL(p, s); err != nil {
+		return err
 	}
 
 	log.Printf("migration: timestamp v2 phase=%s archive_files=%d wal_files=%d", s.Phase, len(s.L1)+len(s.L2), len(s.WAL))
@@ -139,6 +135,48 @@ func EnsureV2(ctx context.Context, cfg Config) error {
 		}
 	}
 	return cutover(p, s)
+}
+
+// PrepareV2 snapshots the migration inputs and moves existing sealed WAL
+// segments out of the live WAL directory. It performs no Parquet rewriting,
+// so the server can call it synchronously before starting ingestion and run
+// EnsureV2 in the background afterward. The returned bool reports whether a
+// migration remains to be completed.
+func PrepareV2(cfg Config) (bool, error) {
+	cfg = withDefaults(cfg)
+	p := migrationPaths(cfg.DataDir)
+	if version, ok, err := readVersion(p.format); err != nil {
+		return false, err
+	} else if ok {
+		if version != formatVersion {
+			return false, fmt.Errorf("unsupported data format version %d", version)
+		}
+		return false, cleanupCompleted(p)
+	}
+	s, err := loadOrCreateState(cfg, p)
+	if err != nil {
+		return false, err
+	}
+	if s == nil {
+		return false, writeVersion(p.format)
+	}
+	if err := detachWAL(p, s); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func withDefaults(cfg Config) Config {
+	if cfg.MemoryLimitMB <= 0 {
+		cfg.MemoryLimitMB = 512
+	}
+	if cfg.L1TargetBytes <= 0 {
+		cfg.L1TargetBytes = 64 << 20
+	}
+	if cfg.L2TargetBytes <= 0 {
+		cfg.L2TargetBytes = 340 << 20
+	}
+	return cfg
 }
 
 func migrationPaths(dataDir string) paths {
@@ -223,6 +261,56 @@ func loadOrCreateState(cfg Config, p paths) (*state, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// detachWAL prevents a live writer from replacing a snapshotted segment with
+// the same event-time filename while a long-running migration is reading it.
+// Each rename is reconciled and persisted independently so a process crash at
+// either side of the rename remains resumable.
+func detachWAL(p paths, s *state) error {
+	if len(s.WAL) == 0 {
+		return nil
+	}
+	dir := filepath.Join(p.workspace, "wal-source")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for i := range s.WAL {
+		source := s.WAL[i].Path
+		target := filepath.Join(dir, filepath.Base(source))
+		if filepath.Clean(filepath.Dir(source)) == filepath.Clean(dir) {
+			continue
+		}
+
+		targetInfo, targetErr := os.Stat(target)
+		_, sourceErr := os.Stat(source)
+		switch {
+		case sourceErr == nil && os.IsNotExist(targetErr):
+			if err := os.Rename(source, target); err != nil {
+				return fmt.Errorf("isolate migration WAL %s: %w", source, err)
+			}
+			targetInfo, targetErr = os.Stat(target)
+		case os.IsNotExist(sourceErr) && targetErr == nil:
+			// A prior process completed the rename before saving state.
+		case sourceErr == nil && targetErr == nil:
+			return fmt.Errorf("migration WAL exists at both %s and %s", source, target)
+		default:
+			if sourceErr != nil && !os.IsNotExist(sourceErr) {
+				return sourceErr
+			}
+			if targetErr != nil {
+				return fmt.Errorf("migration WAL missing from %s and %s", source, target)
+			}
+		}
+		if targetErr != nil {
+			return targetErr
+		}
+		s.WAL[i] = snapshot(target, targetInfo)
+		if err := saveState(p.state, s); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func buildStaging(ctx context.Context, cfg Config, p paths, s *state) error {

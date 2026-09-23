@@ -44,15 +44,49 @@ type Catalog struct {
 // and builds the catalog.
 func Open(dir string) (*Catalog, error) {
 	c := &Catalog{dir: dir, files: make(map[string]File)}
+	if err := c.reload(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// Reload atomically rebuilds the catalog from the archive directory. Queries
+// keep using the previous snapshot until the replacement scan is complete.
+// This is used after a background format migration swaps the archive tree.
+func (c *Catalog) Reload() error {
+	files, seq, err := scan(c.dir)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.files = files
+	c.seq = seq
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *Catalog) reload() error {
+	files, seq, err := scan(c.dir)
+	if err != nil {
+		return err
+	}
+	c.files = files
+	c.seq = seq
+	return nil
+}
+
+func scan(dir string) (map[string]File, int64, error) {
+	files := make(map[string]File)
+	var maxSeq int64
 
 	for _, level := range []int{L1, L2} {
-		levelDir := c.LevelDir(level)
+		levelDir := filepath.Join(dir, fmt.Sprintf("l%d", level))
 		if err := os.MkdirAll(levelDir, 0o755); err != nil {
-			return nil, fmt.Errorf("failed to create archive directory %s: %w", levelDir, err)
+			return nil, 0, fmt.Errorf("failed to create archive directory %s: %w", levelDir, err)
 		}
 		entries, err := os.ReadDir(levelDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read archive directory %s: %w", levelDir, err)
+			return nil, 0, fmt.Errorf("failed to read archive directory %s: %w", levelDir, err)
 		}
 		for _, entry := range entries {
 			if entry.IsDir() {
@@ -67,13 +101,13 @@ func Open(dir string) (*Catalog, error) {
 				continue
 			}
 			path := filepath.Join(levelDir, entry.Name())
-			c.files[path] = File{Path: path, Level: level, Min: min, Max: max, Size: info.Size()}
-			if seq > c.seq {
-				c.seq = seq
+			files[path] = File{Path: path, Level: level, Min: min, Max: max, Size: info.Size()}
+			if seq > maxSeq {
+				maxSeq = seq
 			}
 		}
 	}
-	return c, nil
+	return files, maxSeq, nil
 }
 
 // LevelDir returns the directory holding files of the given level.
