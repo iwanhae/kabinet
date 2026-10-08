@@ -18,19 +18,6 @@
   user-select: none;
 }
 
-.thSortable {
-  cursor: pointer;
-}
-
-.thSortable:hover {
-  color: var(--ink);
-}
-
-.sortMark {
-  color: var(--accent);
-  margin-left: 2px;
-}
-
 .row {
   cursor: pointer;
 }

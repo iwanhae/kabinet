@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -150,6 +151,39 @@ func TestPipelineConvertAndQuery(t *testing.T) {
 	}
 	if got, ok := rows[0]["timestamp"].(time.Time); !ok || !got.Equal(observed) {
 		t.Fatalf("expected series.lastObservedTime %s, got %v", observed, rows[0]["timestamp"])
+	}
+
+	// Explore reads only visible columns, including a partial metadata struct.
+	// Selecting a row fetches the full event in the exact timestamp range.
+	rows, _, err = executor.RangeQuery(context.Background(), `
+		SELECT timestamp,
+			struct_pack(namespace := metadata.namespace, uid := metadata.uid,
+				resourceVersion := metadata.resourceVersion) AS metadata,
+			struct_pack(kind := involvedObject.kind, name := involvedObject.name) AS involvedObject,
+			type, reason, "count", LEFT(message, 240) AS message
+		FROM $events WHERE timestamp < TIMESTAMPTZ '2100-01-01T00:00:00Z'
+		ORDER BY timestamp DESC, metadata.uid DESC LIMIT 1`, start, end)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("explore list query failed: rows=%v err=%v", rows, err)
+	}
+	encoded, err := json.Marshal(rows[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed struct {
+		Metadata struct {
+			UID             string `json:"uid"`
+			ResourceVersion string `json:"resourceVersion"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(encoded, &listed); err != nil || listed.Metadata.UID != "uid-c" {
+		t.Fatalf("unexpected explore row: %s err=%v", encoded, err)
+	}
+	rows, _, err = executor.RangeQuery(context.Background(),
+		`SELECT * FROM $events WHERE metadata.uid = 'uid-c' AND metadata.resourceVersion = '3' LIMIT 1`,
+		observed, observed)
+	if err != nil || len(rows) != 1 || rows[0]["message"] != "message uid-c/3" {
+		t.Fatalf("exact-time detail lookup failed: rows=%v err=%v", rows, err)
 	}
 
 	// Canonical timestamp falls back to creationTimestamp while source time

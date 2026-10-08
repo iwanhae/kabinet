@@ -1,8 +1,7 @@
 import React from "react";
 import dayjs from "dayjs";
 import { Chip } from "../../ui";
-import type { EventResult } from "../../types/events";
-import type { SortKey } from "../../lib/sql/pagination";
+import type { EventListRow } from "../../types/events";
 import { formatCount } from "../../utils/format";
 
 export interface ColumnDef {
@@ -10,13 +9,12 @@ export interface ColumnDef {
   label: string;
   /** Fixed width in px; omit for the flexible column. */
   width?: number;
-  sortKey?: SortKey;
   align?: "left" | "right";
   mono?: boolean;
-  render: (event: EventResult) => React.ReactNode;
+  render: (event: EventListRow) => React.ReactNode;
 }
 
-export const eventTimestamp = (event: EventResult): string => event.timestamp;
+export const eventTimestamp = (event: EventListRow): string => event.timestamp;
 
 export const COLUMNS: ColumnDef[] = [
   {
@@ -31,7 +29,6 @@ export const COLUMNS: ColumnDef[] = [
     key: "time",
     label: "Time",
     width: 148,
-    sortKey: "ts",
     mono: true,
     render: (e) => dayjs(eventTimestamp(e)).format("MM-DD HH:mm:ss"),
   },
@@ -39,7 +36,6 @@ export const COLUMNS: ColumnDef[] = [
     key: "namespace",
     label: "Namespace",
     width: 150,
-    sortKey: "namespace",
     mono: true,
     render: (e) => e.metadata.namespace ?? "—",
   },
@@ -60,7 +56,6 @@ export const COLUMNS: ColumnDef[] = [
     key: "reason",
     label: "Reason",
     width: 170,
-    sortKey: "reason",
     mono: true,
     render: (e) => e.reason,
   },
@@ -68,7 +63,6 @@ export const COLUMNS: ColumnDef[] = [
     key: "count",
     label: "Count",
     width: 64,
-    sortKey: "count",
     align: "right",
     mono: true,
     render: (e) => formatCount(e.count ?? 1),

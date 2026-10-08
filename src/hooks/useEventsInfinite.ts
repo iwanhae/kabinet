@@ -8,76 +8,103 @@ import {
   buildPageQuery,
   cursorFromRow,
   type PageCursor,
-  type SortSpec,
 } from "../lib/sql/pagination";
-import type { EventResult } from "../types/events";
+import type { EventListRow } from "../types/events";
 
 export const PAGE_SIZE = 100;
+const HOUR_MS = 60 * 60 * 1000;
+
+interface PageState {
+  windowEnd: string;
+  /** Retained while paging within the same window. */
+  windowStart?: string;
+  cursor: PageCursor | null;
+}
 
 interface EventsPage {
-  rows: EventResult[];
-  nextCursor: PageCursor | null;
-  meta: QueryMeta;
+  rows: EventListRow[];
+  nextState: PageState | null;
+  meta?: QueryMeta;
 }
 
 type PageKey = readonly [
   "events/page",
   string, // whereSql
-  string, // sort
   string, // from
   string, // to
   number, // refreshKey
-  string, // cursor JSON ("" for page 1)
+  string, // PageState JSON
 ];
 
 /**
- * Keyset-paginated infinite scroll over $events.
- *
- * Pre-compaction WAL duplicates (same uid, different resourceVersion) are
- * deduplicated client-side, keeping the highest resourceVersion — so a page
- * can contribute fewer than PAGE_SIZE visible rows. End-of-data is judged on
- * the raw page length.
+ * Browse backwards in bounded time windows, never sorting the entire archive
+ * to return a single page. Empty windows grow up to one day to skip gaps.
  */
-export function useEventsInfinite(whereSql: string, sort: SortSpec) {
+export function useEventsInfinite(whereSql: string) {
   const { from, to } = useTimeRange();
   const { refreshKey } = useRefresh();
-  const sortStr = `${sort.key}:${sort.dir}`;
 
   const getKey = useCallback(
     (_index: number, prev: EventsPage | null): PageKey | null => {
-      if (prev && prev.rows.length < PAGE_SIZE) return null;
-      const cursor = prev?.nextCursor;
+      if (prev && !prev.nextState) return null;
+      const state = prev?.nextState ?? { windowEnd: to, cursor: null };
       return [
         "events/page",
         whereSql,
-        sortStr,
         from,
         to,
         refreshKey,
-        cursor ? JSON.stringify(cursor) : "",
+        JSON.stringify(state),
       ] as const;
     },
-    [whereSql, sortStr, from, to, refreshKey],
+    [whereSql, from, to, refreshKey],
   );
 
   const fetcher = useCallback(async (key: PageKey): Promise<EventsPage> => {
-    const [, where, sortKey, fromIso, toIso, , cursorJson] = key;
-    const [k, dir] = sortKey.split(":") as [SortSpec["key"], SortSpec["dir"]];
-    const cursor: PageCursor | null = cursorJson
-      ? JSON.parse(cursorJson)
-      : null;
-    const sql = buildPageQuery(where, { key: k, dir }, cursor, PAGE_SIZE);
-    const response = await postQuery<EventResult>(sql, fromIso, toIso);
-    recordQueryMeta("explore", sql, response.meta);
-    const rows = response.results;
-    return {
-      rows,
-      nextCursor:
-        rows.length > 0
-          ? cursorFromRow(rows[rows.length - 1], { key: k, dir })
-          : null,
-      meta: response.meta,
-    };
+    const [, where, fromIso, , , stateJson] = key;
+    const fromMs = Date.parse(fromIso);
+    let { windowEnd, windowStart, cursor } = JSON.parse(stateJson) as PageState;
+    let emptyWindows = 0;
+    let meta: QueryMeta | undefined;
+
+    while (Date.parse(windowEnd) > fromMs) {
+      const start =
+        windowStart ??
+        new Date(
+          Math.max(
+            fromMs,
+            Date.parse(windowEnd) - Math.min(2 ** emptyWindows, 24) * HOUR_MS,
+          ),
+        ).toISOString();
+      const sql = buildPageQuery(where, windowEnd, cursor, PAGE_SIZE);
+      const response = await postQuery<EventListRow>(sql, start, windowEnd);
+      recordQueryMeta("explore", sql, response.meta);
+      meta = response.meta;
+
+      if (response.results.length > 0) {
+        const nextState: PageState | null =
+          response.results.length === PAGE_SIZE
+            ? {
+                windowEnd,
+                windowStart: start,
+                cursor: cursorFromRow(
+                  response.results[response.results.length - 1],
+                ),
+              }
+            : Date.parse(start) > fromMs
+              ? { windowEnd: start, cursor: null }
+              : null;
+        return { rows: response.results, nextState, meta };
+      }
+
+      // A cursor exhausted this window; the next window starts at its boundary.
+      windowEnd = start;
+      windowStart = undefined;
+      cursor = null;
+      emptyWindows++;
+    }
+
+    return { rows: [], nextState: null, meta };
   }, []);
 
   const { data, error, size, setSize, isValidating, isLoading } =
@@ -89,7 +116,7 @@ export function useEventsInfinite(whereSql: string, sort: SortSpec) {
 
   const events = useMemo(() => {
     const byUid = new Map<string, number>();
-    const out: EventResult[] = [];
+    const out: EventListRow[] = [];
     (data ?? []).forEach((page) => {
       page.rows.forEach((row) => {
         const uid = row.metadata.uid;
@@ -109,7 +136,7 @@ export function useEventsInfinite(whereSql: string, sort: SortSpec) {
   }, [data]);
 
   const lastPage = data?.[data.length - 1];
-  const isReachingEnd = Boolean(lastPage && lastPage.rows.length < PAGE_SIZE);
+  const isReachingEnd = Boolean(lastPage && !lastPage.nextState);
   const isLoadingMore =
     isValidating && size > 0 && data !== undefined && data.length < size;
 

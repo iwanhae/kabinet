@@ -36,8 +36,6 @@ const KPIS: KpiDef[] = [
         ? `${((row.warning_events / row.total_events) * 100).toFixed(1)}%`
         : "0%",
   },
-  { key: "active_namespaces", label: "Namespaces" },
-  { key: "distinct_objects", label: "Objects" },
   {
     key: "failed_pods",
     label: "Failed pods",

@@ -9,6 +9,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -41,9 +43,25 @@ type Executor struct {
 // New creates an executor backed by an in-memory DuckDB instance that only
 // ever reads external files.
 func New(cat *catalog.Catalog, walWriter *wal.Writer, walDir string) (*Executor, error) {
+	tempDir := filepath.Join(filepath.Dir(walDir), "query-tmp")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create query temp directory: %w", err)
+	}
 	db, err := sql.Open("duckdb", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open duckdb: %w", err)
+	}
+	// A single connection serializes frontend queries so their memory budgets do
+	// not overlap. Keep headroom: DuckDB's memory_limit is not a hard RSS limit.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	settings := fmt.Sprintf(
+		"SET memory_limit='256MB'; SET threads=2; SET temp_directory=%s;",
+		schema.QuotePath(tempDir),
+	)
+	if _, err := db.Exec(settings); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to configure query duckdb: %w", err)
 	}
 	return &Executor{db: db, cat: cat, wal: walWriter, walDir: walDir}, nil
 }

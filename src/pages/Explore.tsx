@@ -1,7 +1,6 @@
 import React, { useMemo } from "react";
 import { useSearch } from "wouter";
 import { useFilters } from "../hooks/useFilters";
-import { useSortState } from "../hooks/useSortState";
 import { useEventsInfinite } from "../hooks/useEventsInfinite";
 import { useEventsQuery } from "../hooks/useEventsQuery";
 import { useUrlParams } from "../hooks/useUrlParams";
@@ -16,7 +15,6 @@ import styles from "./Explore.module.css";
 
 const Explore: React.FC = () => {
   const filters = useFilters();
-  const { sort, toggleSort } = useSortState();
   const { updateParams } = useUrlParams();
   const search = useSearch();
 
@@ -27,34 +25,52 @@ const Explore: React.FC = () => {
     isLoadingMore,
     isReachingEnd,
     error,
-  } = useEventsInfinite(filters.whereSql, sort);
+  } = useEventsInfinite(filters.whereSql);
 
   // Selection lives in the URL: `uid` (current) or `resourceVersion` (legacy links).
-  const { uidParam, rvParam } = useMemo(() => {
+  const { uidParam, rvParam, eventTs, eventRv } = useMemo(() => {
     const params = new URLSearchParams(search);
     return {
       uidParam: params.get("uid"),
       rvParam: params.get("resourceVersion"),
+      eventTs: params.get("eventTs"),
+      eventRv: params.get("eventRv"),
     };
   }, [search]);
 
   const selectedFromList = useMemo(
     () =>
-      uidParam ? events.find((e) => e.metadata.uid === uidParam) : undefined,
-    [events, uidParam],
+      uidParam
+        ? events.find(
+            (e) =>
+              e.metadata.uid === uidParam &&
+              (!eventRv || e.metadata.resourceVersion === eventRv),
+          )
+        : undefined,
+    [events, uidParam, eventRv],
   );
 
-  const lookupQuery =
-    uidParam && !selectedFromList
-      ? `SELECT * FROM $events WHERE metadata.uid = '${escapeSqlString(uidParam)}' LIMIT 1`
-      : !uidParam && rvParam
-        ? `SELECT * FROM $events WHERE metadata.resourceVersion = '${escapeSqlString(rvParam)}' LIMIT 1`
-        : null;
+  const lookupTime = eventTs ?? selectedFromList?.timestamp;
+  const lookupQuery = uidParam
+    ? `SELECT * FROM $events WHERE metadata.uid = '${escapeSqlString(uidParam)}'${eventRv ? ` AND metadata.resourceVersion = '${escapeSqlString(eventRv)}'` : ""} LIMIT 1`
+    : !uidParam && rvParam
+      ? `SELECT * FROM $events WHERE metadata.resourceVersion = '${escapeSqlString(rvParam)}' LIMIT 1`
+      : null;
   const { data: lookupData } = useEventsQuery<EventResult>(lookupQuery, {
     scope: "detail",
+    ...(lookupTime ? { from: lookupTime, to: lookupTime } : {}),
   });
 
-  const selected = selectedFromList ?? lookupData?.[0] ?? null;
+  // SWR keeps the previous response while a new selection is loading.
+  const candidate = lookupData?.[0];
+  const selected =
+    candidate &&
+    (uidParam
+      ? candidate.metadata.uid === uidParam &&
+        (!eventRv || candidate.metadata.resourceVersion === eventRv)
+      : candidate.metadata.resourceVersion === rvParam)
+      ? candidate
+      : null;
   const panelOpen = Boolean(uidParam || rvParam);
 
   return (
@@ -76,10 +92,13 @@ const Explore: React.FC = () => {
       <div className={styles.tableWrap}>
         <EventsVirtualTable
           events={events}
-          sort={sort}
-          onSortChange={toggleSort}
           onRowClick={(e) =>
-            updateParams({ uid: e.metadata.uid, resourceVersion: undefined })
+            updateParams({
+              uid: e.metadata.uid,
+              eventTs: e.timestamp,
+              eventRv: e.metadata.resourceVersion,
+              resourceVersion: undefined,
+            })
           }
           onEndReached={loadMore}
           isLoadingMore={isLoadingMore}
@@ -92,7 +111,12 @@ const Explore: React.FC = () => {
         open={panelOpen}
         event={selected}
         onClose={() =>
-          updateParams({ uid: undefined, resourceVersion: undefined })
+          updateParams({
+            uid: undefined,
+            eventTs: undefined,
+            eventRv: undefined,
+            resourceVersion: undefined,
+          })
         }
         onFilter={(field, value) =>
           filters.addChip({ field, op: "eq", values: [value] })

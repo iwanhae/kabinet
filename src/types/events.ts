@@ -47,3 +47,15 @@ export interface EventResult {
   reportingComponent?: string;
   reportingInstance?: string;
 }
+
+/** Narrow projection for Explore; the detail panel fetches the full event. */
+export type EventListRow = Pick<
+  EventResult,
+  "timestamp" | "type" | "reason" | "count" | "message"
+> & {
+  metadata: Pick<
+    EventResult["metadata"],
+    "namespace" | "uid" | "resourceVersion"
+  >;
+  involvedObject: Pick<EventResult["involvedObject"], "kind" | "name">;
+};

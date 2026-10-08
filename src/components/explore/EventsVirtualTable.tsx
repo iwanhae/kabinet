@@ -1,16 +1,13 @@
 import React, { useMemo, useRef } from "react";
 import { TableVirtuoso, type TableComponents } from "react-virtuoso";
 import { COLUMNS } from "./columns";
-import type { EventResult } from "../../types/events";
-import type { SortSpec, SortKey } from "../../lib/sql/pagination";
+import type { EventListRow } from "../../types/events";
 import { cx } from "../../ui";
 import styles from "./EventsVirtualTable.module.css";
 
 export interface EventsVirtualTableProps {
-  events: EventResult[];
-  sort: SortSpec;
-  onSortChange: (key: SortKey) => void;
-  onRowClick: (event: EventResult) => void;
+  events: EventListRow[];
+  onRowClick: (event: EventListRow) => void;
   onEndReached: () => void;
   isLoadingMore: boolean;
   isReachingEnd: boolean;
@@ -18,14 +15,12 @@ export interface EventsVirtualTableProps {
 }
 
 interface RowContext {
-  onRowClick: (event: EventResult) => void;
+  onRowClick: (event: EventListRow) => void;
   selectedUid?: string;
 }
 
 const EventsVirtualTable: React.FC<EventsVirtualTableProps> = ({
   events,
-  sort,
-  onSortChange,
   onRowClick,
   onEndReached,
   isLoadingMore,
@@ -36,7 +31,7 @@ const EventsVirtualTable: React.FC<EventsVirtualTableProps> = ({
   const ctxRef = useRef<RowContext>({ onRowClick, selectedUid });
   ctxRef.current = { onRowClick, selectedUid };
 
-  const components = useMemo<TableComponents<EventResult>>(
+  const components = useMemo<TableComponents<EventListRow>>(
     () => ({
       Table: (props) => <table {...props} className={styles.table} />,
       TableRow: ({ item, ...props }) => {
@@ -62,7 +57,7 @@ const EventsVirtualTable: React.FC<EventsVirtualTableProps> = ({
   }
 
   return (
-    <TableVirtuoso<EventResult>
+    <TableVirtuoso<EventListRow>
       data={events}
       components={components}
       style={{ height: "100%" }}
@@ -71,30 +66,13 @@ const EventsVirtualTable: React.FC<EventsVirtualTableProps> = ({
       fixedHeaderContent={() => (
         <tr>
           {COLUMNS.map((col) => {
-            const sortable = col.sortKey !== undefined;
-            const active = sortable && sort.key === col.sortKey;
             return (
               <th
                 key={col.key}
-                className={cx(styles.th, sortable && styles.thSortable)}
+                className={styles.th}
                 style={col.width ? { width: col.width } : undefined}
-                onClick={
-                  sortable ? () => onSortChange(col.sortKey!) : undefined
-                }
-                aria-sort={
-                  active
-                    ? sort.dir === "asc"
-                      ? "ascending"
-                      : "descending"
-                    : undefined
-                }
               >
                 {col.label}
-                {active && (
-                  <span className={styles.sortMark}>
-                    {sort.dir === "asc" ? "▲" : "▼"}
-                  </span>
-                )}
               </th>
             );
           })}

@@ -51,18 +51,6 @@ export function intervalToSql(interval: Interval): string {
   return `${interval.value} ${interval.unit}`;
 }
 
-/**
- * Bucket TIMESTAMPTZ on the same UTC grid using fixed-width hours. DuckDB's
- * calendar day/week intervals invoke slow time-zone binning for every row.
- * Keep intervalToSql for the human-readable bucket label.
- */
-export function bucketIntervalToSql(interval: Interval): string {
-  if (interval.unit === "day" || interval.unit === "week") {
-    return `${interval.seconds / 3600} hours`;
-  }
-  return intervalToSql(interval);
-}
-
 /** End of the bucket that starts at `bucketStartIso`. */
 export function bucketEnd(
   bucketStartIso: string,

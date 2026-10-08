@@ -3,13 +3,8 @@ import dayjs from "dayjs";
 import { useEventsQuery } from "../../hooks/useEventsQuery";
 import { useFilters } from "../../hooks/useFilters";
 import { useTimeRange } from "../../hooks/useUrlParams";
-import {
-  getDynamicInterval,
-  intervalToSql,
-  bucketIntervalToSql,
-  bucketEnd,
-} from "../../utils/time";
-import { TS_EXPR } from "../../lib/sql/expr";
+import { getDynamicInterval, intervalToSql, bucketEnd } from "../../utils/time";
+import { buildTimelineQuery } from "../../lib/sql/overview";
 import { formatCount, formatCompact } from "../../utils/format";
 import { Alert, Skeleton } from "../../ui";
 import { EChart } from "./EChart";
@@ -38,16 +33,7 @@ const TimelineHistogram: React.FC<Props> = ({ height = 260 }) => {
   const interval = useMemo(() => getDynamicInterval(from, to, 60), [from, to]);
 
   const query = useMemo(
-    () => `
-      SELECT
-        time_bucket(INTERVAL '${bucketIntervalToSql(interval)}', ${TS_EXPR}) AS time_bucket,
-        type,
-        COUNT(*) AS count
-      FROM $events
-      WHERE ${whereSql}
-      GROUP BY time_bucket, type
-      ORDER BY time_bucket, type
-    `,
+    () => buildTimelineQuery(interval.seconds, whereSql),
     [interval, whereSql],
   );
 

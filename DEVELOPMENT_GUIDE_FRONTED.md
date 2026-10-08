@@ -45,7 +45,7 @@ src/
 ├── lib/
 │   ├── api/         # queryClient.ts — postQuery<T> returning results + scan meta
 │   ├── filters/     # filter chip model, FIELD_DEFS registry, WHERE compiler, URL codec
-│   └── sql/         # TS_EXPR, keyset pagination builder, overview queries
+│   └── sql/         # TS_EXPR, integer bucket helpers, Explore pagination, overview queries
 ├── components/
 │   ├── charts/      # EChart wrapper, TimelineHistogram, CabinetHeatmap, SimpleBarLine
 │   ├── dimension/   # DimensionPage — generic group-by table (Namespaces/Nodes/Components tabs)
@@ -55,7 +55,7 @@ src/
 │   ├── Layout.tsx   # top bar (wordmark, nav, TimeRangePicker, theme toggle)
 │   └── ScanCostBar.tsx  # footer "ledger stamp": last query's ms / files / bytes
 ├── contexts/        # ThemeContext (data-theme), RefreshContext (manual refresh)
-├── hooks/           # useEventsQuery, useEventsInfinite, useFilters, useSortState, …
+├── hooks/           # useEventsQuery, useEventsInfinite, useFilters, …
 ├── stores/          # queryMetaStore (zustand) — scan-cost telemetry
 ├── pages/           # Overview (/), Namespaces/Nodes/Components (thin DimensionPage wrappers), Explore (/p/discover), McpPage (/p/mcp)
 ├── types/           # EventResult types
@@ -72,7 +72,7 @@ All backend access goes through the hooks — never call `fetch` in components.
 
 - **`useEventsQuery<T>(query, opts?)`** (`src/hooks/useEventsQuery.ts`) — single query within the global time range. Pass `null` to skip fetching. `opts.from/to` override the range (used by TopMovers' doubled window); `opts.scope` tags the cache and the scan-cost recording.
 - **`useEventsQueryMeta<T>`** — same, but returns `{ results, meta }` including `duration_ms`, `files`, `total_files_size_bytes`.
-- **`useEventsInfinite(whereSql, sort)`** (`src/hooks/useEventsInfinite.ts`) — keyset-paginated infinite scroll for the Explore table. Cursor is `(timestamp, metadata.uid)` (timestamps are second-precision, ties are common). Pre-compaction WAL duplicates (same uid) are deduplicated client-side keeping the highest resourceVersion.
+- **`useEventsInfinite(whereSql)`** (`src/hooks/useEventsInfinite.ts`) — time-descending infinite scroll over bounded time windows (1 hour, expanding only to skip empty ranges). The list query projects only visible fields; selecting a row fetches its full event in a narrow timestamp range. Cursor is `(timestamp, metadata.uid)`. Pre-compaction WAL duplicates (same uid) are deduplicated client-side keeping the highest resourceVersion.
 - Every fetch records its scan cost into `queryMetaStore`, which `ScanCostBar` renders in the footer.
 - Global SWR config lives in `App.tsx` (`keepPreviousData`, dedup, retry). Manual refresh works by folding `RefreshContext`'s counter into every SWR key — do not call `mutate()` globally.
 
@@ -80,7 +80,7 @@ All backend access goes through the hooks — never call `fetch` in components.
 
 - The global range lives in URL params (`from`, `to`) as raw strings (`now-30m`, ISO). `useTimeRange()` returns both raw and parsed values plus `setTimeRange()`.
 - Relative syntax: `now-<n><s|m|h|d|w>` (`src/utils/timeRange.ts`).
-- Chart bucketing: `getDynamicInterval(from, to, targetBuckets)` returns a structured `Interval`; render SQL with `intervalToSql()` and compute bucket ends with `bucketEnd()` (`src/utils/time.ts`).
+- Chart bucketing: `getDynamicInterval(from, to, targetBuckets)` returns a structured `Interval`. Group on `bucketNumberSql(interval.seconds)` and convert to a timestamp **after aggregation** with `bucketTimestampSql(interval.seconds)` (`src/lib/sql/buckets.ts`); the fixed UTC origin matches DuckDB's `time_bucket` for every supported interval, including two weeks. Use `intervalToSql()` for display and `bucketEnd()` for bucket ends (`src/utils/time.ts`).
 - **Always bucket/sort on `TS_EXPR`** (`src/lib/sql/expr.ts`), which resolves to Kabinet's canonical `timestamp` column.
 
 ### 3. Filters (global)
@@ -94,7 +94,7 @@ All backend access goes through the hooks — never call `fetch` in components.
 
 ### 4. URL is the source of truth
 
-Everything shareable lives in URL params: `from`, `to`, `filters`/`where`, `sort` (`ts:desc`), `uid` (detail panel selection; legacy `resourceVersion` still honored). Derive state from `useSearch()` via memoized hooks (`useFilters`, `useSortState`, `useTimeRange`); mutate only through `updateParams`. Do not duplicate URL state into `useState`.
+Everything shareable lives in URL params: `from`, `to`, `filters`/`where`, `uid` plus `eventTs`/`eventRv` (detail panel selection; legacy `resourceVersion` still honored). Explore always sorts by descending timestamp. Derive state from `useSearch()` via memoized hooks (`useFilters`, `useTimeRange`); mutate only through `updateParams`. Do not duplicate URL state into `useState`.
 
 Zustand is only for ephemeral cross-cutting UI state that has no business in the URL (currently just `queryMetaStore`).
 

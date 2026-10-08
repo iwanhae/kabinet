@@ -2,11 +2,7 @@ import { useMemo } from "react";
 import { useEventsQuery } from "./useEventsQuery";
 import { useFilters } from "./useFilters";
 import { useTimeRange } from "./useUrlParams";
-import {
-  getDynamicInterval,
-  bucketIntervalToSql,
-  type Interval,
-} from "../utils/time";
+import { getDynamicInterval, type Interval } from "../utils/time";
 import {
   buildDimensionBucketsQuery,
   type DimensionBucketRow,
@@ -52,7 +48,7 @@ export function useDimensionBuckets(
   const { data, error, isLoading } = useEventsQuery<DimensionBucketRow>(
     buildDimensionBucketsQuery(
       FIELD_DEFS[field].sqlExpr,
-      bucketIntervalToSql(interval),
+      interval.seconds,
       whereSql,
     ),
     { scope: "overview" },

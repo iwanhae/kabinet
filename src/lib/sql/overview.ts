@@ -1,4 +1,5 @@
 import { TS_EXPR } from "./expr";
+import { bucketNumberSql, bucketTimestampSql } from "./buckets";
 import { escapeSqlString } from "../filters/compile";
 
 export const FAILED_POD_REASONS = [
@@ -32,8 +33,6 @@ export const buildKpiQuery = (whereSql: string): string => `
   SELECT
     COUNT(*) AS total_events,
     COUNT(*) FILTER (WHERE type = 'Warning') AS warning_events,
-    COUNT(DISTINCT metadata.namespace) AS active_namespaces,
-    COUNT(DISTINCT involvedObject.name) AS distinct_objects,
     COUNT(*) FILTER (WHERE reason IN (${inList(FAILED_POD_REASONS)})) AS failed_pods,
     COUNT(*) FILTER (WHERE reason = 'BackOff') AS restarts,
     COUNT(*) FILTER (WHERE type = 'Warning' AND reason IN (${inList(NODE_ISSUE_REASONS)})) AS node_issues,
@@ -45,13 +44,33 @@ export const buildKpiQuery = (whereSql: string): string => `
 export interface KpiRow {
   total_events: number;
   warning_events: number;
-  active_namespaces: number;
-  distinct_objects: number;
   failed_pods: number;
   restarts: number;
   node_issues: number;
   storage_events: number;
 }
+
+/** Timeline counts by UTC bucket and event type. */
+export const buildTimelineQuery = (
+  intervalSeconds: number,
+  whereSql: string,
+): string => `
+  WITH grouped AS (
+    SELECT
+      ${bucketNumberSql(intervalSeconds)} AS bucket_number,
+      type,
+      COUNT(*) AS count
+    FROM $events
+    WHERE (${whereSql})
+    GROUP BY 1, 2
+  )
+  SELECT
+    ${bucketTimestampSql(intervalSeconds)} AS time_bucket,
+    type,
+    count
+  FROM grouped
+  ORDER BY 1, 2
+`;
 
 /**
  * Per-dimension (namespace/node/component), per-bucket counts in a single
@@ -62,17 +81,25 @@ export interface KpiRow {
  */
 export const buildDimensionBucketsQuery = (
   dimExpr: string,
-  intervalSql: string,
+  intervalSeconds: number,
   whereSql: string,
 ): string => `
+  WITH grouped AS (
+    SELECT
+      ${dimExpr} AS dim,
+      ${bucketNumberSql(intervalSeconds)} AS bucket_number,
+      COUNT(*) AS total,
+      COUNT(*) FILTER (WHERE type = 'Warning') AS warnings
+    FROM $events
+    WHERE ${dimExpr} IS NOT NULL AND (${whereSql})
+    GROUP BY 1, 2
+  )
   SELECT
-    ${dimExpr} AS dim,
-    time_bucket(INTERVAL '${intervalSql}', ${TS_EXPR}) AS bucket,
-    COUNT(*) AS total,
-    COUNT(*) FILTER (WHERE type = 'Warning') AS warnings
-  FROM $events
-  WHERE ${dimExpr} IS NOT NULL AND (${whereSql})
-  GROUP BY 1, 2
+    dim,
+    ${bucketTimestampSql(intervalSeconds)} AS bucket,
+    total,
+    warnings
+  FROM grouped
   ORDER BY 1, 2
 `;
 

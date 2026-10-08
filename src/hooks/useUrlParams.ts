@@ -10,10 +10,10 @@ export interface UrlParams {
   filters?: string;
   /** Raw WHERE clause (raw mode / legacy links). */
   where?: string;
-  /** Sort spec, e.g. "ts:desc". */
-  sort?: string;
   /** Selected event uid (detail panel). */
   uid?: string;
+  eventTs?: string;
+  eventRv?: string;
   query?: string;
   /** Legacy detail-link param, still honored. */
   resourceVersion?: string;
@@ -24,8 +24,9 @@ const PARAM_KEYS: (keyof UrlParams)[] = [
   "to",
   "filters",
   "where",
-  "sort",
   "uid",
+  "eventTs",
+  "eventRv",
   "query",
   "resourceVersion",
 ];
